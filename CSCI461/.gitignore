@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Env
+.env
+.env.local
+
+# Logs
+logs/
+
+# Virtualenv
+venv/
+
+# Coverage
+htmlcov/
+.coverage
+
+# PyCharm / VSCode
+.idea/
+.vscode/

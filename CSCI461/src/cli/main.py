@@ -1,9 +1,11 @@
 from __future__ import annotations
-import argparse, json, os, sys, time
+import argparse, json, os, sys, time, logging
 from typing import Any, Dict, List
 
 from .url_types import parse_url
-from .metrics import compute_all_metrics, compute_net_score
+from .metrics import compute_all_metrics, compute_net_score, configure_logging
+
+configure_logging()
 
 def read_lines(p: str) -> List[str]:
     with open(p, "r", encoding="utf-8") as f:
