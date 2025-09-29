@@ -10,8 +10,9 @@ __pycache__/
 # Logs
 logs/
 
-# Virtualenv
+# Virtualenv (project and global)
 venv/
+.venv/
 
 # Coverage
 htmlcov/
@@ -20,3 +21,14 @@ htmlcov/
 # PyCharm / VSCode
 .idea/
 .vscode/
+
+# macOS
+.DS_Store
+
+# Build / packaging artifacts
+dist/
+build/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/

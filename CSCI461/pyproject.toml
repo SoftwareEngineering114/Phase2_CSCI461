@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csci461-cli"
+version = "0.1.0"
+description = "CLI for trustworthy model reuse (Phase 1)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [ { name = "CSCI461 Team" } ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
