@@ -3,12 +3,11 @@ Ramp-up time metric: measures documentation quality and ease of getting started.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class RampUpTimeMetric(BaseMetric):
+class RampUpTimeMetric:
     """
     Ramp-up time metric based on README quality.
     
@@ -17,23 +16,37 @@ class RampUpTimeMetric(BaseMetric):
     - Length and completeness of documentation
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> float:
+    name: str = "ramp_up_time"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[float, int]:
         """
-        Compute ramp-up time score.
+        Compute ramp-up time score with timing.
         
         Args:
-            ctx: Context containing 'hf_readme' key
+            repo_info: Context containing 'hf_readme' key
             
         Returns:
-            Score from 0.0 to 1.0
+            Tuple of (score from 0.0 to 1.0, latency_ms)
         """
-        readme = ctx.get("hf_readme", "")
+        t0 = time.perf_counter()
         
-        # Check for examples or quickstart
-        examples = 1.0 if ("example" in readme.lower() or "quickstart" in readme.lower()) else 0.0
+        try:
+            readme = repo_info.get("hf_readme", "")
+            
+            # Check for examples or quickstart
+            examples = 1.0 if ("example" in readme.lower() or "quickstart" in readme.lower()) else 0.0
+            
+            # Score based on documentation length (300 words = 1.0)
+            length_score = min(1.0, len(readme.split()) / 300.0)
+            
+            score = 0.5 * length_score + 0.5 * examples
+            score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+            
+        except Exception:
+            score = 0.0
         
-        # Score based on documentation length (300 words = 1.0)
-        length_score = min(1.0, len(readme.split()) / 300.0)
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
         
-        return 0.5 * length_score + 0.5 * examples
+        return score, latency_ms
 

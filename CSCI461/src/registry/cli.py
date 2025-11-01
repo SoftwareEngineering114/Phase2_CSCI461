@@ -9,7 +9,7 @@ import sys
 from typing import List
 
 from .logging_setup import configure_logging
-from .models import ResourceScore
+from .models import ModelScore
 from .ndjson_output import format_ndjson_line
 from .scorer import compute_all_metrics, compute_net_score, populate_context
 from .url_parser import parse_url
@@ -41,40 +41,41 @@ def process_model_url(url: str, name: str) -> None:
         name: The model name/identifier
     """
     # Build context with metadata
-    ctx = populate_context(url, name)
+    repo_info = populate_context(url, name)
     
     # Compute all metrics
-    metrics = compute_all_metrics(ctx)
+    metrics = compute_all_metrics(repo_info)
     
     # Compute net score
     net_score, net_latency = compute_net_score(metrics)
     
-    # Build output dictionary
-    output = {
-        "name": name,
-        "category": "MODEL",
-        "net_score": round(net_score, 3),
-        "net_score_latency": net_latency,
-        "ramp_up_time": round(metrics["ramp_up_time"], 3),
-        "ramp_up_time_latency": metrics["ramp_up_time_latency"],
-        "bus_factor": round(metrics["bus_factor"], 3),
-        "bus_factor_latency": metrics["bus_factor_latency"],
-        "performance_claims": round(metrics["performance_claims"], 3),
-        "performance_claims_latency": metrics["performance_claims_latency"],
-        "license": round(metrics["license"], 3),
-        "license_latency": metrics["license_latency"],
-        "size_score": metrics["size_score"],
-        "size_score_latency": metrics["size_score_latency"],
-        "dataset_and_code_score": round(metrics["dataset_and_code_score"], 3),
-        "dataset_and_code_score_latency": metrics["dataset_and_code_score_latency"],
-        "dataset_quality": round(metrics["dataset_quality"], 3),
-        "dataset_quality_latency": metrics["dataset_quality_latency"],
-        "code_quality": round(metrics["code_quality"], 3),
-        "code_quality_latency": metrics["code_quality_latency"],
-    }
+    # Build ModelScore dataclass
+    model_score = ModelScore(
+        name=name,
+        category="MODEL",
+        net_score=net_score,
+        net_score_latency=net_latency,
+        ramp_up_time=metrics["ramp_up_time"],
+        ramp_up_time_latency=metrics["ramp_up_time_latency"],
+        bus_factor=metrics["bus_factor"],
+        bus_factor_latency=metrics["bus_factor_latency"],
+        performance_claims=metrics["performance_claims"],
+        performance_claims_latency=metrics["performance_claims_latency"],
+        license=metrics["license"],
+        license_latency=metrics["license_latency"],
+        size_score=metrics["size_score"],
+        size_score_latency=metrics["size_score_latency"],
+        dataset_and_code_score=metrics["dataset_and_code_score"],
+        dataset_and_code_score_latency=metrics["dataset_and_code_score_latency"],
+        dataset_quality=metrics["dataset_quality"],
+        dataset_quality_latency=metrics["dataset_quality_latency"],
+        code_quality=metrics["code_quality"],
+        code_quality_latency=metrics["code_quality_latency"],
+    )
     
-    # Output NDJSON line
-    print(format_ndjson_line(output))
+    # Convert to NDJSON and output
+    output_dict = model_score.to_ndjson_dict()
+    print(format_ndjson_line(dict(output_dict)))
 
 
 def main(argv: List[str] | None = None) -> int:

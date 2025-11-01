@@ -3,12 +3,11 @@ Size score metric: evaluates model compatibility with different hardware platfor
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class SizeScoreMetric(BaseMetric):
+class SizeScoreMetric:
     """
     Size score metric based on total model weights size.
     
@@ -19,42 +18,59 @@ class SizeScoreMetric(BaseMetric):
     - AWS Server (< 100 GB)
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> Dict[str, float]:
+    name: str = "size_score"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[Dict[str, float], int]:
         """
-        Compute size score for each hardware target.
+        Compute size score for each hardware target with timing.
         
         Args:
-            ctx: Context containing 'weights_total_bytes' key
+            repo_info: Context containing 'weights_total_bytes' key
             
         Returns:
-            Dictionary mapping hardware targets to compatibility scores (0.0-1.0)
+            Tuple of (dict mapping hardware to scores 0.0-1.0, latency_ms)
         """
-        total = ctx.get("weights_total_bytes", None)
+        t0 = time.perf_counter()
         
-        if total is None:
-            # No size information available - assume works on larger hardware
-            return {
+        try:
+            total = repo_info.get("weights_total_bytes", None)
+            
+            if total is None:
+                # No size information available - assume works on larger hardware
+                scores = {
+                    "raspberry_pi": 0.0,
+                    "jetson_nano": 0.0,
+                    "desktop_pc": 1.0,
+                    "aws_server": 1.0,
+                }
+            else:
+                # Thresholds in bytes
+                thresholds = {
+                    "raspberry_pi": 50 * 1024 * 1024,      # 50 MB
+                    "jetson_nano": 700 * 1024 * 1024,      # 700 MB
+                    "desktop_pc": 8 * 1024 * 1024 * 1024,  # 8 GB
+                    "aws_server": 100 * 1024 * 1024 * 1024,  # 100 GB
+                }
+                
+                scores = {}
+                for k, thresh in thresholds.items():
+                    if total <= thresh:
+                        scores[k] = 1.0
+                    else:
+                        # Gradual degradation up to 10x the threshold
+                        score = 1.0 - (total - thresh) / (thresh * 10)
+                        scores[k] = max(0.0, min(1.0, score))
+            
+        except Exception:
+            scores = {
                 "raspberry_pi": 0.0,
                 "jetson_nano": 0.0,
-                "desktop_pc": 1.0,
-                "aws_server": 1.0,
+                "desktop_pc": 0.0,
+                "aws_server": 0.0,
             }
         
-        # Thresholds in bytes
-        thresholds = {
-            "raspberry_pi": 50 * 1024 * 1024,      # 50 MB
-            "jetson_nano": 700 * 1024 * 1024,      # 700 MB
-            "desktop_pc": 8 * 1024 * 1024 * 1024,  # 8 GB
-            "aws_server": 100 * 1024 * 1024 * 1024,  # 100 GB
-        }
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
         
-        out = {}
-        for k, thresh in thresholds.items():
-            if total <= thresh:
-                out[k] = 1.0
-            else:
-                # Gradual degradation up to 10x the threshold
-                out[k] = min(1.0, max(0.0, 1.0 - (total - thresh) / (thresh * 10)))
-        
-        return out
+        return scores, latency_ms
 

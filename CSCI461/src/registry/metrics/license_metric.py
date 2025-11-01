@@ -3,12 +3,11 @@ License metric: evaluates license permissiveness and clarity.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class LicenseMetric(BaseMetric):
+class LicenseMetric:
     """
     License metric based on license type.
     
@@ -19,29 +18,45 @@ class LicenseMetric(BaseMetric):
     - No license: 0.0
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> float:
+    name: str = "license"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[float, int]:
         """
-        Compute license score.
+        Compute license score with timing.
         
         Args:
-            ctx: Context containing 'license' and 'hf_readme' keys
+            repo_info: Context containing 'license' and 'hf_readme' keys
             
         Returns:
-            Score from 0.0 to 1.0
+            Tuple of (score from 0.0 to 1.0, latency_ms)
         """
-        lic = ctx.get("license", "").lower() if ctx.get("license") else ""
+        t0 = time.perf_counter()
         
-        if not lic:
-            # Try README as fallback
-            readme = ctx.get("hf_readme", "").lower()
-            if "license" in readme:
-                return 0.5
-            return 0.0
+        try:
+            lic = repo_info.get("license", "").lower() if repo_info.get("license") else ""
+            
+            if not lic:
+                # Try README as fallback
+                readme = repo_info.get("hf_readme", "").lower()
+                if "license" in readme:
+                    score = 0.5
+                else:
+                    score = 0.0
+            else:
+                # Check for permissive licenses
+                permissive_licenses = ["lgpl", "mit", "apache", "bsd"]
+                if any(pl in lic for pl in permissive_licenses):
+                    score = 1.0
+                else:
+                    score = 0.2
+            
+            score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+            
+        except Exception:
+            score = 0.0
         
-        # Check for permissive licenses
-        permissive_licenses = ["lgpl", "mit", "apache", "bsd"]
-        if any(pl in lic for pl in permissive_licenses):
-            return 1.0
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
         
-        return 0.2
+        return score, latency_ms
 
