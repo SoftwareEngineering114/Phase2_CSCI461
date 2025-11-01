@@ -1,6 +1,8 @@
-# CSCI461 CLI — Phase 1
+# CSCI461 Registry — Phase 2 Refactored Package
 
-Quick start
+A Python package for trustworthy model reuse scoring with comprehensive metrics.
+
+## Quick Start
 
 1. Clone the repository (if you haven't already), create a local virtual environment, and activate it:
 
@@ -14,7 +16,7 @@ cd <repo-dir>/CSCI461
 
 # Create and activate a local virtual environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 2. Install dependencies and the package in editable mode:
@@ -28,22 +30,106 @@ pip install -e .
 3. Run tests:
 
 ```bash
+# Quick test run
 pytest -q
+
+# With coverage report
+pytest --cov=registry --cov-report=term-missing
 ```
 
-4. Run the CLI (example):
+4. Run the CLI:
 
 ```bash
-# Use the wrapper script or run the module directly
-bash run/run.bash run path/to/urls.txt
-# or
-python -m cli.main path/to/urls.txt
+# Using the wrapper script
+bash run/run.bash /absolute/path/to/urls.txt
+
+# Using Python module directly
+python -m registry.cli /absolute/path/to/urls.txt
+
+# Using the run.py script
+python run.py /absolute/path/to/urls.txt
 ```
 
-Environment variables
-- `HUGGINGFACE_HUB_TOKEN` (optional) — improves Hugging Face API rate limits
-- `GITHUB_TOKEN` (optional) — for private repo access or higher GitHub rate limits
+## Package Structure
 
-Notes
-- Do not commit local virtual environments. `.venv/` is ignored in `.gitignore`.
-- See `CSCI461/.env.sample` for environment variable examples.
+```
+.
+├─ run.py                   # Executable CLI entrypoint
+├─ requirements.txt         # Python dependencies
+├─ pyproject.toml          # Package configuration + tool configs
+├─ setup.cfg               # Flake8 configuration
+├─ src/
+│   └─ registry/
+│       ├─ __init__.py
+│       ├─ models.py        # Dataclasses for scores + resources
+│       ├─ url_parser.py    # URL detection and metadata extraction
+│       ├─ metrics/
+│       │    ├─ __init__.py
+│       │    ├─ base.py
+│       │    ├─ ramp_up_time.py
+│       │    ├─ bus_factor.py
+│       │    ├─ performance_claims.py
+│       │    ├─ license_metric.py
+│       │    ├─ size_score.py
+│       │    ├─ dataset_and_code_score.py
+│       │    ├─ dataset_quality.py
+│       │    └─ code_quality.py
+│       ├─ scorer.py        # Orchestrates metrics in parallel
+│       ├─ ndjson_output.py # NDJSON formatting
+│       ├─ logging_setup.py # LOG_FILE and LOG_LEVEL handling
+│       └─ cli.py           # Main CLI interface
+├─ tests/
+│   ├─ conftest.py          # Shared fixtures
+│   ├─ test_ndjson_output.py
+│   └─ test_scorer_ranges.py
+```
+
+## Metrics
+
+The package computes the following metrics for MODEL resources:
+
+- **Ramp-up Time**: Documentation quality and ease of getting started
+- **Bus Factor**: Contributor diversity and project resilience
+- **Performance Claims**: Presence of benchmarks and evaluations
+- **License**: License permissiveness and clarity
+- **Size Score**: Hardware compatibility (Raspberry Pi, Jetson Nano, Desktop PC, AWS Server)
+- **Dataset & Code Score**: Availability of training data and example code
+- **Dataset Quality**: Quality based on download counts
+- **Code Quality**: Engineering practices (tests, CI/CD, linting)
+- **Net Score**: Weighted combination of all metrics
+
+## Environment Variables
+
+- `LOG_FILE`: Path to log file (optional, defaults to stderr)
+- `LOG_LEVEL`: Logging verbosity (0=CRITICAL, 1=INFO, 2+=DEBUG)
+- `HUGGINGFACE_HUB_TOKEN`: Improves Hugging Face API rate limits (optional)
+- `GITHUB_TOKEN`: For private repo access or higher GitHub rate limits (optional)
+
+## Development
+
+### Type Checking
+
+```bash
+mypy src/registry
+```
+
+### Code Formatting
+
+```bash
+isort src tests
+flake8 src tests
+```
+
+### Running Specific Tests
+
+```bash
+pytest tests/test_ndjson_output.py -v
+pytest tests/test_scorer_ranges.py -v
+```
+
+## Notes
+
+- All code includes type annotations for strong typing
+- Tests use pytest with coverage reporting
+- Package follows standard Python packaging conventions
+- Do not commit local virtual environments (`.venv/` is gitignored)

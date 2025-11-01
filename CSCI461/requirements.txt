@@ -5,6 +5,7 @@ GitPython>=3.1.31
 
 # Dev / test dependencies
 pytest>=7.0
+pytest-cov>=4.0
 coverage>=7.2
 flake8>=6.0
 mypy>=1.0

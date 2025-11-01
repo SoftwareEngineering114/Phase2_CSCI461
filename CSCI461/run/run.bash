@@ -54,7 +54,7 @@ PY
   echo "${passed}/${total_tests} test cases passed. ${cov_percent}% line coverage achieved."
   exit $rc
 elif [[ -f "$cmd" ]]; then
-  python3 -m cli.main "$cmd"
+  python3 -m registry.cli "$cmd"
   exit $?
 else
   usage
