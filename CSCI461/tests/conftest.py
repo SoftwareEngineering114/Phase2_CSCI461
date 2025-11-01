@@ -3,8 +3,20 @@ Pytest configuration and shared fixtures.
 """
 from __future__ import annotations
 
+import os
+from typing import Any, Dict
+
 import pytest
-from typing import Dict, Any
+
+
+@pytest.fixture(autouse=True)
+def disable_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Automatically disable logging for all tests to prevent log file creation.
+    
+    Sets LOG_LEVEL=0 so tests don't write log files.
+    """
+    monkeypatch.setenv("LOG_LEVEL", "0")
 
 
 @pytest.fixture
