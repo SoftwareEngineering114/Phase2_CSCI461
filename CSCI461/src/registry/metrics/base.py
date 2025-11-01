@@ -1,49 +1,43 @@
 """
-Base metric class for all metrics.
+Base metric Protocol for all metrics.
 """
 from __future__ import annotations
 
-import time
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple, TypeVar
-
-T = TypeVar('T', float, Dict[str, float])
+from typing import Any, Dict, Protocol, Tuple, Union, runtime_checkable
 
 
-class BaseMetric(ABC):
+@runtime_checkable
+class Metric(Protocol):
     """
-    Abstract base class for all metrics.
+    Protocol for metric computation.
     
-    Subclasses must implement the compute() method which calculates
-    the metric value from a context dictionary.
+    All metrics must implement:
+    - name: str attribute matching NDJSON field name
+    - compute(repo_info) method returning (score, latency_ms)
+    
+    Requirements:
+    - Score MUST be clamped to [0.0, 1.0] (or dict[str, float] for size_score)
+    - Latency MUST be int milliseconds, rounded
+    - MUST NOT raise on missing data; degrade gracefully (return 0.0)
+    - Must handle network failures and return valid score + latency
     """
     
-    @abstractmethod
-    def compute(self, ctx: Dict[str, Any]) -> T:
+    name: str  # e.g. "ramp_up_time", "bus_factor", etc.
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[Union[float, Dict[str, float]], int]:
         """
-        Compute the metric value from the given context.
+        Compute the metric score and latency.
         
         Args:
-            ctx: Dictionary containing all metadata and data needed for computation
+            repo_info: Dictionary containing all metadata about the repository/model
             
         Returns:
-            The computed metric value (float or dict for size_score)
-        """
-        pass
-    
-    def compute_with_timing(self, ctx: Dict[str, Any]) -> Tuple[T, int]:
-        """
-        Compute the metric and measure execution time.
-        
-        Args:
-            ctx: Dictionary containing all metadata and data needed for computation
+            Tuple of (score, latency_ms) where:
+            - score is float between 0.0 and 1.0 (or dict for size_score)
+            - latency_ms is int milliseconds (rounded)
             
-        Returns:
-            Tuple of (metric_value, latency_ms)
+        Note:
+            MUST NOT raise exceptions. On error, return (0.0, latency) where
+            latency is still measured. Must degrade gracefully on missing data.
         """
-        t0 = time.perf_counter()
-        value = self.compute(ctx)
-        t1 = time.perf_counter()
-        latency_ms = int(round((t1 - t0) * 1000))
-        return value, latency_ms
-
+        ...

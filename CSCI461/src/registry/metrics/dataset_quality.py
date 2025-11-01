@@ -4,12 +4,11 @@ Dataset quality metric: evaluates quality based on download count and popularity
 from __future__ import annotations
 
 import math
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class DatasetQualityMetric(BaseMetric):
+class DatasetQualityMetric:
     """
     Dataset quality metric based on download count.
     
@@ -18,22 +17,36 @@ class DatasetQualityMetric(BaseMetric):
     - Higher downloads: log scale up to 1.0
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> float:
+    name: str = "dataset_quality"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[float, int]:
         """
         Compute dataset quality score.
         
         Args:
-            ctx: Context containing 'dataset_downloads' key
+            repo_info: Context containing 'dataset_downloads' key
             
         Returns:
-            Score from 0.2 to 1.0
+            Tuple of (score, latency_ms) where score is 0.2 to 1.0
         """
-        downloads = ctx.get("dataset_downloads", 0)
+        t0 = time.perf_counter()
         
-        if downloads <= 0:
-            return 0.2
+        try:
+            downloads = repo_info.get("dataset_downloads", 0)
+            
+            if downloads <= 0:
+                score = 0.2
+            else:
+                # Log scale normalization
+                score = min(1.0, math.log1p(downloads) / 10.0)
+            
+            # Clamp to [0, 1]
+            score = max(0.0, min(1.0, score))
+            
+        except Exception:
+            score = 0.2  # Default when data is missing
         
-        # Log scale normalization
-        score = min(1.0, math.log1p(downloads) / 10.0)
-        return score
-
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
+        
+        return score, latency_ms

@@ -3,12 +3,11 @@ Performance claims metric: measures presence of benchmarks and evaluations.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class PerformanceClaimsMetric(BaseMetric):
+class PerformanceClaimsMetric:
     """
     Performance claims metric based on README content.
     
@@ -18,24 +17,36 @@ class PerformanceClaimsMetric(BaseMetric):
     - Evaluation results
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> float:
+    name: str = "performance_claims"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[float, int]:
         """
         Compute performance claims score.
         
         Args:
-            ctx: Context containing 'hf_readme' key
+            repo_info: Context containing 'hf_readme' key
             
         Returns:
-            1.0 if benchmarks/accuracy/eval mentioned, 0.0 otherwise
+            Tuple of (score, latency_ms) where score is 0.0 or 1.0
         """
-        readme = ctx.get("hf_readme", "")
-        readme_lower = readme.lower()
+        t0 = time.perf_counter()
         
-        has_claims = (
-            "benchmark" in readme_lower
-            or "accuracy" in readme_lower
-            or "eval" in readme_lower
-        )
+        try:
+            readme = repo_info.get("hf_readme", "")
+            readme_lower = readme.lower()
+            
+            has_claims = (
+                "benchmark" in readme_lower
+                or "accuracy" in readme_lower
+                or "eval" in readme_lower
+            )
+            
+            score = 1.0 if has_claims else 0.0
+            
+        except Exception:
+            score = 0.0
         
-        return 1.0 if has_claims else 0.0
-
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
+        
+        return score, latency_ms

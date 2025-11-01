@@ -6,10 +6,10 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-import requests
 from git import GitCommandError, Repo
 from huggingface_hub import model_info
 
@@ -23,7 +23,8 @@ from .metrics import (
     RampUpTimeMetric,
     SizeScoreMetric,
 )
-from .models import MetricResult, ResourceScore
+from .metrics.base import Metric
+from .models import ModelScore, ResourceCategory
 
 LOG = logging.getLogger(__name__)
 
@@ -144,27 +145,27 @@ def populate_context(url: str, name: str) -> Dict[str, Any]:
     return ctx
 
 
-def compute_all_metrics(ctx: Dict[str, Any]) -> Dict[str, Any]:
+def compute_all_metrics(repo_info: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Compute all metrics in parallel.
+    Compute all metrics in parallel using the Metric protocol.
     
     Args:
-        ctx: Context dictionary containing all necessary metadata
+        repo_info: Context dictionary containing all necessary metadata
         
     Returns:
         Dictionary with metric values and latencies
     """
-    # Initialize metric instances
-    metrics = {
-        "ramp_up_time": RampUpTimeMetric(),
-        "bus_factor": BusFactorMetric(),
-        "performance_claims": PerformanceClaimsMetric(),
-        "license": LicenseMetric(),
-        "size_score": SizeScoreMetric(),
-        "dataset_and_code_score": DatasetAndCodeScoreMetric(),
-        "dataset_quality": DatasetQualityMetric(),
-        "code_quality": CodeQualityMetric(),
-    }
+    # Initialize all metrics
+    metrics: List[Metric] = [
+        RampUpTimeMetric(),
+        BusFactorMetric(),
+        PerformanceClaimsMetric(),
+        LicenseMetric(),
+        SizeScoreMetric(),
+        DatasetAndCodeScoreMetric(),
+        DatasetQualityMetric(),
+        CodeQualityMetric(),
+    ]
     
     results: Dict[str, Any] = {}
     
@@ -172,20 +173,21 @@ def compute_all_metrics(ctx: Dict[str, Any]) -> Dict[str, Any]:
     max_workers = min(8, (os.cpu_count() or 1) * 2)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(metric.compute_with_timing, ctx): name
-            for name, metric in metrics.items()
+            executor.submit(metric.compute, repo_info): metric
+            for metric in metrics
         }
         
         for fut in as_completed(futures):
-            name = futures[fut]
+            metric = futures[fut]
             try:
                 value, latency_ms = fut.result()
-                results[name] = value
-                results[f"{name}_latency"] = latency_ms
+                results[metric.name] = value
+                results[f"{metric.name}_latency"] = latency_ms
             except Exception as e:
-                LOG.info("Metric %s failed: %s", name, e)
-                results[name] = 0.0
-                results[f"{name}_latency"] = 0
+                LOG.error("Metric %s failed: %s", metric.name, e)
+                # Metrics should not raise, but handle it gracefully
+                results[metric.name] = 0.0
+                results[f"{metric.name}_latency"] = 0
     
     return results
 
@@ -200,35 +202,86 @@ def compute_net_score(metrics: Dict[str, Any]) -> tuple[float, int]:
     Returns:
         Tuple of (net_score, latency_ms)
     """
-    import time
-    
     t0 = time.perf_counter()
     
-    # Weights for each metric
-    weights = {
-        "size_score": 0.15,
-        "license": 0.15,
-        "ramp_up_time": 0.15,
-        "bus_factor": 0.10,
-        "dataset_and_code_score": 0.10,
-        "dataset_quality": 0.10,
-        "code_quality": 0.10,
-        "performance_claims": 0.15,
-    }
-    
-    def get_metric_value(key: str) -> float:
-        """Extract metric value, handling size_score dict specially."""
-        if key == "size_score":
-            value = metrics.get("size_score", {})
-            if isinstance(value, dict):
-                return float(value.get("desktop_pc", 1.0))
-            return float(value)
-        return float(metrics.get(key, 0.0))
-    
-    net_score = sum(weights[k] * get_metric_value(k) for k in weights)
+    try:
+        # Weights for each metric
+        weights = {
+            "size_score": 0.15,
+            "license": 0.15,
+            "ramp_up_time": 0.15,
+            "bus_factor": 0.10,
+            "dataset_and_code_score": 0.10,
+            "dataset_quality": 0.10,
+            "code_quality": 0.10,
+            "performance_claims": 0.15,
+        }
+        
+        def get_metric_value(key: str) -> float:
+            """Extract metric value, handling size_score dict specially."""
+            if key == "size_score":
+                value = metrics.get("size_score", {})
+                if isinstance(value, dict):
+                    return float(value.get("desktop_pc", 1.0))
+                return float(value)
+            return float(metrics.get(key, 0.0))
+        
+        net_score = sum(weights[k] * get_metric_value(k) for k in weights)
+        
+        # Clamp to [0, 1]
+        net_score = max(0.0, min(1.0, net_score))
+        
+    except Exception as e:
+        LOG.error("Net score computation failed: %s", e)
+        net_score = 0.0
     
     t1 = time.perf_counter()
     latency_ms = int(round((t1 - t0) * 1000))
     
     return net_score, latency_ms
 
+
+def score_model(url: str, name: str, category: ResourceCategory) -> ModelScore:
+    """
+    Score a model and return a ModelScore dataclass.
+    
+    Args:
+        url: The model URL to process
+        name: The model name/identifier
+        category: The resource category (should be "MODEL")
+        
+    Returns:
+        ModelScore object with all metrics computed
+    """
+    # Build context with metadata
+    repo_info = populate_context(url, name)
+    
+    # Compute all metrics
+    metrics = compute_all_metrics(repo_info)
+    
+    # Compute net score
+    net_score_val, net_score_lat = compute_net_score(metrics)
+    
+    # Build ModelScore
+    return ModelScore(
+        name=name,
+        category=category,
+        ramp_up_time=metrics.get("ramp_up_time", 0.0),
+        ramp_up_time_latency=metrics.get("ramp_up_time_latency", 0),
+        bus_factor=metrics.get("bus_factor", 0.0),
+        bus_factor_latency=metrics.get("bus_factor_latency", 0),
+        performance_claims=metrics.get("performance_claims", 0.0),
+        performance_claims_latency=metrics.get("performance_claims_latency", 0),
+        license=metrics.get("license", 0.0),
+        license_latency=metrics.get("license_latency", 0),
+        size_score=metrics.get("size_score", {}),
+        size_score_latency=metrics.get("size_score_latency", 0),
+        dataset_and_code_score=metrics.get("dataset_and_code_score", 0.0),
+        dataset_and_code_score_latency=metrics.get("dataset_and_code_score_latency", 0),
+        dataset_quality=metrics.get("dataset_quality", 0.0),
+        dataset_quality_latency=metrics.get("dataset_quality_latency", 0),
+        code_quality=metrics.get("code_quality", 0.0),
+        code_quality_latency=metrics.get("code_quality_latency", 0),
+        net_score=net_score_val,
+        net_score_latency=net_score_lat,
+    )

@@ -3,12 +3,11 @@ Dataset and code score: evaluates availability of training data and example code
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Tuple
 
-from .base import BaseMetric
 
-
-class DatasetAndCodeScoreMetric(BaseMetric):
+class DatasetAndCodeScoreMetric:
     """
     Dataset and code availability metric.
     
@@ -18,23 +17,35 @@ class DatasetAndCodeScoreMetric(BaseMetric):
     - Neither: 0.0
     """
     
-    def compute(self, ctx: Dict[str, Any]) -> float:
+    name: str = "dataset_and_code_score"
+    
+    def compute(self, repo_info: Dict[str, Any]) -> Tuple[float, int]:
         """
         Compute dataset and code score.
         
         Args:
-            ctx: Context containing 'dataset_link' and 'example_code_present' keys
+            repo_info: Context containing 'dataset_link' and 'example_code_present' keys
             
         Returns:
-            Score from 0.0 to 1.0
+            Tuple of (score, latency_ms) where score is 0.0, 0.5, or 1.0
         """
-        has_dataset = bool(ctx.get("dataset_link"))
-        has_example_code = bool(ctx.get("example_code_present"))
+        t0 = time.perf_counter()
         
-        if has_dataset and has_example_code:
-            return 1.0
-        elif has_dataset or has_example_code:
-            return 0.5
-        else:
-            return 0.0
-
+        try:
+            has_dataset = bool(repo_info.get("dataset_link"))
+            has_example_code = bool(repo_info.get("example_code_present"))
+            
+            if has_dataset and has_example_code:
+                score = 1.0
+            elif has_dataset or has_example_code:
+                score = 0.5
+            else:
+                score = 0.0
+            
+        except Exception:
+            score = 0.0
+        
+        t1 = time.perf_counter()
+        latency_ms = int(round((t1 - t0) * 1000))
+        
+        return score, latency_ms
