@@ -127,6 +127,21 @@ pytest tests/test_ndjson_output.py -v
 pytest tests/test_scorer_ranges.py -v
 ```
 
+## CI Pipeline (Pull Request Validation)
+
+Every pull request into `main` triggers a GitHub Actions workflow defined in `.github/workflows/ci.yml`.
+
+The workflow:
+- Installs dependencies
+- Runs `flake8` for linting/style
+- Runs `mypy` for static type checking
+- Runs `pytest` with coverage against:
+  - the scoring / metrics code
+  - NDJSON compliance
+  - FastAPI endpoints (upload, ingest, enumerate)
+
+Long-running performance tests (e.g. multiple concurrent clients) are intentionally excluded from CI and are run manually, which matches course expectations.
+
 ## Notes
 
 - All code includes type annotations for strong typing
