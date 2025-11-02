@@ -32,7 +32,7 @@ jobs:
           ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${IMAGE_NAME}:latest"
 
           echo "Building Docker image locally in Actions runner..."
-          docker build -t $IMAGE_NAME .
+          docker build -t $IMAGE_NAME -f CSCI461/Dockerfile CSCI461
 
           echo "Tagging image for ECR..."
           docker tag $IMAGE_NAME:latest $ECR_URL
@@ -75,3 +75,4 @@ jobs:
               uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
             echo "[EC2] Deployment complete."
+
