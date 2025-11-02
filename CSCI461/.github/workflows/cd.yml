@@ -17,7 +17,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.MY_AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -28,9 +28,10 @@ jobs:
         run: |
           IMAGE_NAME=trustworthy-registry
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${{ secrets.MY_AWS_REGION }}.amazonaws.com/${IMAGE_NAME}:latest"
+          REGION=${{ secrets.AWS_REGION }}
+          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${IMAGE_NAME}:latest"
 
-          echo "Building Docker image..."
+          echo "Building Docker image locally in Actions runner..."
           docker build -t $IMAGE_NAME .
 
           echo "Tagging image for ECR..."
@@ -49,27 +50,28 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
+
             IMAGE_NAME=trustworthy-registry
+            REGION=${{ secrets.AWS_REGION }}
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${{ secrets.MY_AWS_REGION }}.amazonaws.com/${IMAGE_NAME}:latest"
+            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${IMAGE_NAME}:latest"
 
-            echo "Logging into ECR from EC2..."
-            aws ecr get-login-password --region ${{ secrets.MY_AWS_REGION }} \
-              | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${{ secrets.MY_AWS_REGION }}.amazonaws.com"
+            echo "[EC2] Logging into ECR from EC2..."
+            aws ecr get-login-password --region $REGION \
+              | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-            echo "Pulling latest image on EC2..."
+            echo "[EC2] Pulling latest image..."
             docker pull $ECR_URL
 
-            echo "Stopping old container (if running)..."
+            echo "[EC2] Stopping old container if running..."
             docker stop trustworthy-registry || true
             docker rm trustworthy-registry || true
 
-            echo "Starting new container..."
+            echo "[EC2] Starting new container..."
             docker run -d --name trustworthy-registry -p 80:8000 \
               -e LOG_FILE=/var/log/registry.log \
               -e LOG_LEVEL=1 \
               $ECR_URL \
               uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
-            echo "Deployment complete."
-
+            echo "[EC2] Deployment complete."
