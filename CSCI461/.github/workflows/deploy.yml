@@ -1,0 +1,47 @@
+# This CD workflow runs on every push to main. It deploys the latest code to our EC2 instance on AWS by copying the repo over SSH and running docker compose up -d --build on the instance. This satisfies the 'automated deployment to AWS after merge' requirement.
+name: CD - Deploy to AWS
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Write SSH key to file
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+
+      - name: Create app directory on EC2
+        run: |
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p /home/${{ secrets.EC2_USER }}/app"
+
+      - name: Copy code to EC2
+        run: |
+          scp -i ~/.ssh/key.pem -o StrictHostKeyChecking=no -r . ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/app/
+
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "set -e && \
+            cd /home/${{ secrets.EC2_USER }}/app && \
+            echo 'Building and starting containers...' && \
+            docker compose up -d --build && \
+            echo 'Verifying container is running...' && \
+            docker ps | grep trustworthy-registry || (echo 'Error: Container not running!' && exit 1) && \
+            echo 'Deployment complete.'"
+
