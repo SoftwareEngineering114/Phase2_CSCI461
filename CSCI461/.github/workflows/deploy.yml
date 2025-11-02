@@ -38,6 +38,17 @@ jobs:
           source: "."
           target: "/home/${{ secrets.EC2_USER }}/app"
 
+      - name: Prepare SSH key and known_hosts
+        run: |
+          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
+            echo "EC2_SSH_KEY secret is not set. Failing."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa# add EC2 host to known_hosts to avoid interactive prompt
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
