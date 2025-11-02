@@ -142,6 +142,23 @@ The workflow:
 
 Long-running performance tests (e.g. multiple concurrent clients) are intentionally excluded from CI and are run manually, which matches course expectations.
 
+## CD Pipeline (Automatic Deploy on Merge)
+
+After code is merged into `main`, GitHub Actions runs `.github/workflows/cd.yml`.
+
+The CD workflow:
+1. Builds a Docker image of our FastAPI service (the Trustworthy Model Registry API).
+2. Logs in to Amazon ECR and pushes the new `:latest` image.
+3. SSHs into our AWS EC2 host.
+4. On EC2, it:
+   - Logs in to ECR
+   - Pulls the latest image
+   - Stops the old container
+   - Runs the new container on port 80 → 8000 with our service
+   - Passes `LOG_FILE` and `LOG_LEVEL` so logs are captured, which satisfies the logging requirement from the spec.
+
+This screenshot (the Actions run for 'CD - Deploy to AWS') will be used in our Milestone 8 report under 'Automated service deployment (CD)'.
+
 ## Notes
 
 - All code includes type annotations for strong typing

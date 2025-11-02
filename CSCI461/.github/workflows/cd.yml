@@ -1,0 +1,75 @@
+name: CD - Deploy to AWS
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image to ECR
+        id: build-image
+        run: |
+          IMAGE_NAME=trustworthy-registry
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${IMAGE_NAME}:latest"
+
+          echo "Building Docker image..."
+          docker build -t $IMAGE_NAME .
+
+          echo "Tagging image for ECR..."
+          docker tag $IMAGE_NAME:latest $ECR_URL
+
+          echo "Pushing image to ECR..."
+          docker push $ECR_URL
+
+          echo "ECR_URL=$ECR_URL" >> $GITHUB_OUTPUT
+
+      - name: Deploy on EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            IMAGE_NAME=trustworthy-registry
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${IMAGE_NAME}:latest"
+
+            echo "Logging into ECR from EC2..."
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com"
+
+            echo "Pulling latest image on EC2..."
+            docker pull $ECR_URL
+
+            echo "Stopping old container (if running)..."
+            docker stop trustworthy-registry || true
+            docker rm trustworthy-registry || true
+
+            echo "Starting new container..."
+            docker run -d --name trustworthy-registry -p 80:8000 \
+              -e LOG_FILE=/var/log/registry.log \
+              -e LOG_LEVEL=1 \
+              $ECR_URL \
+              uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+            echo "Deployment complete."
+
