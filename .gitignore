@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Env
+.env
+.env.local
+
+# Logs
+logs/
+
+# Virtualenv (project and global)
+venv/
+.venv/
+
+# Coverage
+htmlcov/
+.coverage
+
+# PyCharm / VSCode
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Build / packaging artifacts
+dist/
+build/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
