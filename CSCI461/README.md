@@ -1,5 +1,7 @@
 # CSCI461 Registry — Phase 2 Refactored Package
 
+<!-- Test comment: CI/CD pipeline active -->
+
 A Python package for trustworthy model reuse scoring with comprehensive metrics.
 
 ## Quick Start
