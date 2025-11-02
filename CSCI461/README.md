@@ -1,6 +1,7 @@
 # CSCI461 Registry — Phase 2 Refactored Package
 
 <!-- Test comment: CI/CD pipeline active -->
+<!-- CD workflow updated: EC2 Docker deployment -->
 
 A Python package for trustworthy model reuse scoring with comprehensive metrics.
 
