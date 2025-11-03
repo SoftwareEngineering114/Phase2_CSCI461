@@ -108,9 +108,28 @@ jobs:
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          
+          # Write the key directly - echo with -e to preserve newlines
+          echo -e "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          # Ensure proper line endings and remove trailing blank lines
+          sed -i '/^$/d' ~/.ssh/id_ed25519 || true
+          # Ensure file ends with newline after END marker (SSH requirement)
+          if ! tail -c 1 ~/.ssh/id_ed25519 | grep -q .; then
+            echo "" >> ~/.ssh/id_ed25519
+          fi
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          
+          # Verify key file exists and has content
+          if [ ! -f ~/.ssh/id_ed25519 ] || [ ! -s ~/.ssh/id_ed25519 ]; then
+            echo "ERROR: SSH key file is missing or empty!"
+            exit 1
+          fi
+          
+          echo "Key file size: $(wc -c < ~/.ssh/id_ed25519) bytes"
+          echo "First line: $(head -1 ~/.ssh/id_ed25519)"
+          echo "Last line: $(tail -1 ~/.ssh/id_ed25519)"
           
           # Validate it's a PRIVATE key, not a public key
           echo "Verifying SSH key format..."
@@ -122,19 +141,35 @@ jobs:
           fi
           
           # Verify private key format
-          head -1 ~/.ssh/id_ed25519 | grep -q "BEGIN.*PRIVATE KEY" || (echo "ERROR: Key missing BEGIN PRIVATE KEY marker" && exit 1)
-          tail -1 ~/.ssh/id_ed25519 | grep -q "END.*PRIVATE KEY" || (echo "ERROR: Key missing END PRIVATE KEY marker" && exit 1)
+          if ! head -1 ~/.ssh/id_ed25519 | grep -q "BEGIN.*PRIVATE KEY"; then
+            echo "ERROR: Key missing BEGIN PRIVATE KEY marker"
+            echo "First line: $(head -1 ~/.ssh/id_ed25519)"
+            exit 1
+          fi
+          if ! tail -1 ~/.ssh/id_ed25519 | grep -q "END.*PRIVATE KEY"; then
+            echo "ERROR: Key missing END PRIVATE KEY marker"
+            echo "Last line: $(tail -1 ~/.ssh/id_ed25519)"
+            exit 1
+          fi
           echo "✅ SSH private key format verified"
           
           # Extract and display the public key for debugging (first 50 chars only)
           echo "Extracting public key from private key..."
-          if ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub 2>/dev/null; then
+          if ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub 2>&1; then
             echo "✅ Public key extracted successfully"
             echo "Public key (first 50 chars): $(head -c 50 ~/.ssh/id_ed25519.pub)..."
             echo "Expected on EC2: ssh-ed25519 N9BWtpEgcsW+yUnqtJsrmsEr9iwuEDvGNPFoWp/vWLU="
           else
             echo "❌ ERROR: Could not extract public key from private key"
-            echo "This usually means the secret contains a public key instead of a private key"
+            echo "Key file content (first 200 chars):"
+            head -c 200 ~/.ssh/id_ed25519
+            echo ""
+            exit 1
+          fi
+          
+          # Verify the key file is readable
+          if [ ! -r ~/.ssh/id_ed25519 ]; then
+            echo "ERROR: SSH key file is not readable!"
             exit 1
           fi
           
