@@ -40,3 +40,6 @@ id_rsa*
 id_ed25519*
 test_key*
 *ssh_test*
+
+# CI/CD SSH keys
+my-ci-key*
