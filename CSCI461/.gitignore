@@ -32,3 +32,11 @@ build/
 
 # Test artifacts
 .pytest_cache/
+
+# Exclude SSH keys and sensitive files
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+test_key*
+*ssh_test*
