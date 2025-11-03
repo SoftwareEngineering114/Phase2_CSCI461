@@ -95,11 +95,17 @@ jobs:
           audience: sts.amazonaws.com
           output-env-credentials: true
 
+      # SSH Key Format Requirements for ed25519 keys:
+      # The EC2_SSH_KEY secret must contain the COMPLETE private key including:
+      # -----BEGIN OPENSSH PRIVATE KEY-----
+      # (all the base64 encoded content)
+      # -----END OPENSSH PRIVATE KEY-----
+      # Ensure there are NO extra spaces or newlines before or after.
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Create app directory on EC2
