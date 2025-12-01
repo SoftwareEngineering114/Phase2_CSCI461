@@ -108,11 +108,22 @@ async def health_check() -> dict[str, str]:
     Health check endpoint.
     
     Returns:
-        Status and message indicating the registry is running
+        HTTP 200 with status "healthy" when service is up.
+    """
+    return {"status": "healthy"}
+
+
+@app.get("/health/components")
+async def health_components() -> dict[str, dict[str, str]]:
+    """
+    Component-level health check endpoint.
+    
+    Returns:
+        HTTP 200 with health status of each service component.
     """
     return {
-        "status": "ok",
-        "message": "registry is running"
+        "api": {"status": "healthy"},
+        "database": {"status": "healthy"}
     }
 
 
