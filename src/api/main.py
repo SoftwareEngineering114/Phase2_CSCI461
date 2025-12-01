@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from mangum import Mangum
 import os
 
 # Thread-safe locks for concurrent operations
@@ -513,3 +514,11 @@ async def register_model(request: RegisterRequest) -> dict[str, str]:
         "repo_url": request.repo_url,
         "owner": request.owner
     }
+
+
+# ============================================================================
+# AWS LAMBDA HANDLER
+# ============================================================================
+
+# Mangum adapter for AWS Lambda
+lambda_handler = Mangum(app, lifespan="off")
