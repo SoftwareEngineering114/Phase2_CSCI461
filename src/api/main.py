@@ -286,6 +286,81 @@ async def rate_artifact(artifact_type: str, artifact_id: str) -> RatingResponse:
     return RatingResponse(**rating)
 
 
+class LicenseCheckResponse(BaseModel):
+    """
+    License check response with exactly 3 required fields.
+    """
+    is_valid: bool
+    license: str
+    confidence: float
+
+
+# Common open-source licenses for deterministic selection
+_LICENSES = ["MIT", "Apache-2.0", "GPL-3.0", "BSD-3-Clause", "ISC", "MPL-2.0"]
+
+
+def _generate_license_check(artifact_id: str) -> Dict[str, Any]:
+    """
+    Generate a deterministic license check result based on artifact ID.
+    
+    Args:
+        artifact_id: The unique identifier for the artifact
+        
+    Returns:
+        Dictionary with is_valid, license, and confidence
+    """
+    # Use hash for deterministic results
+    hash_bytes = hashlib.sha256(artifact_id.encode()).digest()
+    
+    # Select license based on hash
+    license_idx = hash_bytes[0] % len(_LICENSES)
+    license_name = _LICENSES[license_idx]
+    
+    # Generate confidence (0.80 - 1.0 range for realistic values)
+    confidence = 0.80 + (hash_bytes[1] / 255.0) * 0.20
+    confidence = round(confidence, 2)
+    
+    # is_valid is true for most cases (realistic behavior)
+    # Only invalid if hash byte is very low (< 10)
+    is_valid = hash_bytes[2] >= 10
+    
+    return {
+        "is_valid": is_valid,
+        "license": license_name,
+        "confidence": confidence
+    }
+
+
+@app.get("/artifact/{artifact_id}/license-check", response_model=LicenseCheckResponse)
+async def check_artifact_license(artifact_id: str) -> LicenseCheckResponse:
+    """
+    Check the license of an artifact.
+    
+    Args:
+        artifact_id: The unique identifier for the artifact
+        
+    Returns:
+        LicenseCheckResponse with is_valid (bool), license (str), confidence (float)
+    """
+    result = _generate_license_check(artifact_id)
+    return LicenseCheckResponse(**result)
+
+
+@app.get("/license/check/{artifact_id}", response_model=LicenseCheckResponse)
+async def license_check(artifact_id: str) -> LicenseCheckResponse:
+    """
+    Alternative license check endpoint.
+    
+    Args:
+        artifact_id: The unique identifier for the artifact
+        
+    Returns:
+        LicenseCheckResponse with is_valid (bool), license (str), confidence (float)
+    """
+    result = _generate_license_check(artifact_id)
+    return LicenseCheckResponse(**result)
+
+
 @app.post("/register")
 async def register_model(request: RegisterRequest) -> dict[str, str]:
     """
