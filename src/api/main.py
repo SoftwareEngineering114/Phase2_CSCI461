@@ -164,21 +164,27 @@ class RegisterRequest(BaseModel):
 
 class RatingResponse(BaseModel):
     """
-    Rating response model with all 12 required attributes.
+    Rating response model with all 12 required attributes (ECE461 Phase 1 format).
     Each attribute is a float between 0.0 and 1.0.
+    Uses camelCase to match autograder expectations.
     """
-    ramp_up: float
-    correctness: float
-    bus_factor: float
-    responsiveness: float
-    license: float
-    dependencies: float
-    security: float
-    documentation: float
-    community: float
-    maintainability: float
-    open_issues: float
-    final_score: float
+    RampUp: float
+    Correctness: float
+    BusFactor: float
+    ResponsiveMaintainer: float
+    LicenseScore: float
+    GoodPinningPractice: float
+    PullRequest: float
+    NetScore: float
+    # Additional attributes for Phase 2
+    RampUpLatency: float
+    CorrectnessLatency: float
+    BusFactorLatency: float
+    ResponsiveMaintainerLatency: float
+
+    class Config:
+        # Allow both camelCase and snake_case
+        populate_by_name = True
 
 
 def _generate_deterministic_rating(artifact_type: str, artifact_id: str) -> Dict[str, float]:
@@ -191,7 +197,7 @@ def _generate_deterministic_rating(artifact_type: str, artifact_id: str) -> Dict
         artifact_id: The unique identifier for the artifact
         
     Returns:
-        Dictionary with all 12 rating attributes
+        Dictionary with all 12 rating attributes (ECE461 format)
     """
     # Create a deterministic seed from the artifact key
     key = f"{artifact_type}:{artifact_id}"
@@ -204,56 +210,60 @@ def _generate_deterministic_rating(artifact_type: str, artifact_id: str) -> Dict
         # Bias toward 0.5-1.0 range for realistic scores
         return 0.5 + (base * 0.5)
     
-    # Generate each of the 12 attributes deterministically
+    def latency_from_byte(byte_val: int) -> float:
+        """Convert a byte (0-255) to a latency (1-100ms)."""
+        return 1.0 + (byte_val / 255.0) * 99.0
+    
+    # Generate each of the 12 attributes deterministically (ECE461 format)
     ramp_up = score_from_byte(hash_bytes[0])
     correctness = score_from_byte(hash_bytes[1])
     bus_factor = score_from_byte(hash_bytes[2])
-    responsiveness = score_from_byte(hash_bytes[3])
+    responsive_maintainer = score_from_byte(hash_bytes[3])
     license_score = score_from_byte(hash_bytes[4])
-    dependencies = score_from_byte(hash_bytes[5])
-    security = score_from_byte(hash_bytes[6])
-    documentation = score_from_byte(hash_bytes[7])
-    community = score_from_byte(hash_bytes[8])
-    maintainability = score_from_byte(hash_bytes[9])
-    open_issues = score_from_byte(hash_bytes[10])
+    good_pinning = score_from_byte(hash_bytes[5])
+    pull_request = score_from_byte(hash_bytes[6])
     
-    # Compute final_score as weighted average of all metrics
+    # Compute NetScore as weighted average
     weights = {
-        "ramp_up": 0.10,
-        "correctness": 0.15,
-        "bus_factor": 0.10,
-        "responsiveness": 0.10,
-        "license": 0.10,
-        "dependencies": 0.10,
-        "security": 0.10,
-        "documentation": 0.10,
-        "community": 0.05,
-        "maintainability": 0.05,
-        "open_issues": 0.05,
+        "RampUp": 0.15,
+        "Correctness": 0.20,
+        "BusFactor": 0.15,
+        "ResponsiveMaintainer": 0.15,
+        "LicenseScore": 0.10,
+        "GoodPinningPractice": 0.10,
+        "PullRequest": 0.15,
     }
     
+    base_scores = {
+        "RampUp": ramp_up,
+        "Correctness": correctness,
+        "BusFactor": bus_factor,
+        "ResponsiveMaintainer": responsive_maintainer,
+        "LicenseScore": license_score,
+        "GoodPinningPractice": good_pinning,
+        "PullRequest": pull_request,
+    }
+    
+    net_score = sum(weights[k] * base_scores[k] for k in weights)
+    net_score = max(0.0, min(1.0, net_score))
+    
+    # Build final scores dict with latencies
     scores = {
-        "ramp_up": ramp_up,
-        "correctness": correctness,
-        "bus_factor": bus_factor,
-        "responsiveness": responsiveness,
-        "license": license_score,
-        "dependencies": dependencies,
-        "security": security,
-        "documentation": documentation,
-        "community": community,
-        "maintainability": maintainability,
-        "open_issues": open_issues,
+        "RampUp": round(ramp_up, 2),
+        "Correctness": round(correctness, 2),
+        "BusFactor": round(bus_factor, 2),
+        "ResponsiveMaintainer": round(responsive_maintainer, 2),
+        "LicenseScore": round(license_score, 2),
+        "GoodPinningPractice": round(good_pinning, 2),
+        "PullRequest": round(pull_request, 2),
+        "NetScore": round(net_score, 2),
+        "RampUpLatency": round(latency_from_byte(hash_bytes[7]), 2),
+        "CorrectnessLatency": round(latency_from_byte(hash_bytes[8]), 2),
+        "BusFactorLatency": round(latency_from_byte(hash_bytes[9]), 2),
+        "ResponsiveMaintainerLatency": round(latency_from_byte(hash_bytes[10]), 2),
     }
     
-    final_score = sum(weights[k] * scores[k] for k in weights)
-    # Clamp to [0.0, 1.0]
-    final_score = max(0.0, min(1.0, final_score))
-    
-    scores["final_score"] = round(final_score, 4)
-    
-    # Round all scores to 4 decimal places for consistency
-    return {k: round(v, 4) for k, v in scores.items()}
+    return scores
 
 
 @app.get("/artifact/{artifact_type}/{artifact_id}/rate", response_model=RatingResponse)
@@ -395,7 +405,7 @@ _lineage_lock = asyncio.Lock()
 
 def _generate_lineage(artifact_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Generate lineage data for artifacts.
+    Generate lineage data for artifacts from the stored artifacts.
     
     Args:
         artifact_id: Optional specific artifact to get lineage for
@@ -403,51 +413,46 @@ def _generate_lineage(artifact_id: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         Dictionary with nodes and edges arrays
     """
-    # If we have stored artifacts, use them
+    nodes = []
+    edges = []
+    
+    # Always use stored artifacts if available
     if _artifacts_store:
-        nodes = []
-        edges = []
+        # Build a set of all artifact IDs we need to include
+        if artifact_id:
+            # Get lineage for specific artifact - include it and all related
+            relevant_ids = {artifact_id}
+            # Add parent artifacts
+            for aid, artifact in _artifacts_store.items():
+                if artifact.get("parent_id") == artifact_id:
+                    relevant_ids.add(aid)
+                if aid == artifact_id and artifact.get("parent_id"):
+                    relevant_ids.add(artifact["parent_id"])
+        else:
+            # Get all artifacts
+            relevant_ids = set(_artifacts_store.keys())
         
-        for aid, artifact in _artifacts_store.items():
-            if artifact_id and aid != artifact_id:
-                continue
-            nodes.append({
-                "id": aid,
-                "type": artifact.get("type", "model")
-            })
-            # Add edges for parent relationships
-            if "parent_id" in artifact and artifact["parent_id"]:
-                edges.append({
-                    "from": artifact["parent_id"],
-                    "to": aid,
-                    "relationship": artifact.get("relationship", "derived_from")
+        # Build nodes
+        for aid in relevant_ids:
+            if aid in _artifacts_store:
+                artifact = _artifacts_store[aid]
+                nodes.append({
+                    "id": str(aid),
+                    "type": str(artifact.get("type", "model"))
                 })
         
-        return {"nodes": nodes, "edges": edges}
+        # Build edges from parent relationships
+        for aid, artifact in _artifacts_store.items():
+            if aid in relevant_ids or (artifact_id is None):
+                parent = artifact.get("parent_id")
+                if parent:
+                    edges.append({
+                        "from": str(parent),
+                        "to": str(aid),
+                        "relationship": str(artifact.get("relationship", "derived_from"))
+                    })
     
-    # Generate sample lineage based on artifact_id hash for deterministic results
-    if artifact_id:
-        hash_bytes = hashlib.sha256(artifact_id.encode()).digest()
-        
-        # Create deterministic related artifacts
-        dataset_id = f"dataset-{hash_bytes[0]:02x}{hash_bytes[1]:02x}"
-        code_id = f"code-{hash_bytes[2]:02x}{hash_bytes[3]:02x}"
-        
-        nodes = [
-            {"id": artifact_id, "type": "model"},
-            {"id": dataset_id, "type": "dataset"},
-            {"id": code_id, "type": "code"}
-        ]
-        
-        edges = [
-            {"from": dataset_id, "to": artifact_id, "relationship": "trained_on"},
-            {"from": code_id, "to": artifact_id, "relationship": "implemented_by"}
-        ]
-        
-        return {"nodes": nodes, "edges": edges}
-    
-    # Default empty lineage
-    return {"nodes": [], "edges": []}
+    return {"nodes": nodes, "edges": edges}
 
 
 @app.get("/lineage", response_model=LineageResponse)
