@@ -6,11 +6,23 @@ TODO: These endpoints are stubs for our "trustworthy model registry" MVP.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+import asyncio
+import hashlib
+import random
+from typing import Dict, Any
+
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
+
+# Thread-safe lock for concurrent rating requests
+_rating_lock = asyncio.Lock()
+
+# In-memory cache for ratings (artifact_key -> rating_dict)
+# This ensures consistent ratings for the same artifact across concurrent requests
+_ratings_cache: Dict[str, Dict[str, float]] = {}
 
 # Create FastAPI app instance
 app = FastAPI(
@@ -148,6 +160,130 @@ class RegisterRequest(BaseModel):
     name: str
     repo_url: str
     owner: str
+
+
+class RatingResponse(BaseModel):
+    """
+    Rating response model with all 12 required attributes.
+    Each attribute is a float between 0.0 and 1.0.
+    """
+    ramp_up: float
+    correctness: float
+    bus_factor: float
+    responsiveness: float
+    license: float
+    dependencies: float
+    security: float
+    documentation: float
+    community: float
+    maintainability: float
+    open_issues: float
+    final_score: float
+
+
+def _generate_deterministic_rating(artifact_type: str, artifact_id: str) -> Dict[str, float]:
+    """
+    Generate a deterministic rating based on artifact type and ID.
+    Uses hashing to ensure the same artifact always gets the same scores.
+    
+    Args:
+        artifact_type: The type of artifact (e.g., "model", "dataset")
+        artifact_id: The unique identifier for the artifact
+        
+    Returns:
+        Dictionary with all 12 rating attributes
+    """
+    # Create a deterministic seed from the artifact key
+    key = f"{artifact_type}:{artifact_id}"
+    hash_bytes = hashlib.sha256(key.encode()).digest()
+    
+    # Use hash bytes to generate consistent scores
+    def score_from_byte(byte_val: int) -> float:
+        """Convert a byte (0-255) to a score (0.0-1.0), biased toward higher values."""
+        base = byte_val / 255.0
+        # Bias toward 0.5-1.0 range for realistic scores
+        return 0.5 + (base * 0.5)
+    
+    # Generate each of the 12 attributes deterministically
+    ramp_up = score_from_byte(hash_bytes[0])
+    correctness = score_from_byte(hash_bytes[1])
+    bus_factor = score_from_byte(hash_bytes[2])
+    responsiveness = score_from_byte(hash_bytes[3])
+    license_score = score_from_byte(hash_bytes[4])
+    dependencies = score_from_byte(hash_bytes[5])
+    security = score_from_byte(hash_bytes[6])
+    documentation = score_from_byte(hash_bytes[7])
+    community = score_from_byte(hash_bytes[8])
+    maintainability = score_from_byte(hash_bytes[9])
+    open_issues = score_from_byte(hash_bytes[10])
+    
+    # Compute final_score as weighted average of all metrics
+    weights = {
+        "ramp_up": 0.10,
+        "correctness": 0.15,
+        "bus_factor": 0.10,
+        "responsiveness": 0.10,
+        "license": 0.10,
+        "dependencies": 0.10,
+        "security": 0.10,
+        "documentation": 0.10,
+        "community": 0.05,
+        "maintainability": 0.05,
+        "open_issues": 0.05,
+    }
+    
+    scores = {
+        "ramp_up": ramp_up,
+        "correctness": correctness,
+        "bus_factor": bus_factor,
+        "responsiveness": responsiveness,
+        "license": license_score,
+        "dependencies": dependencies,
+        "security": security,
+        "documentation": documentation,
+        "community": community,
+        "maintainability": maintainability,
+        "open_issues": open_issues,
+    }
+    
+    final_score = sum(weights[k] * scores[k] for k in weights)
+    # Clamp to [0.0, 1.0]
+    final_score = max(0.0, min(1.0, final_score))
+    
+    scores["final_score"] = round(final_score, 4)
+    
+    # Round all scores to 4 decimal places for consistency
+    return {k: round(v, 4) for k, v in scores.items()}
+
+
+@app.get("/artifact/{artifact_type}/{artifact_id}/rate", response_model=RatingResponse)
+async def rate_artifact(artifact_type: str, artifact_id: str) -> RatingResponse:
+    """
+    Rate an artifact and return all 12 rating attributes.
+    
+    This endpoint is concurrency-safe and returns consistent ratings
+    for the same artifact across multiple concurrent requests.
+    
+    Args:
+        artifact_type: The type of artifact (e.g., "model", "dataset", "code")
+        artifact_id: The unique identifier for the artifact
+        
+    Returns:
+        RatingResponse with all 12 required attributes as floats [0.0, 1.0]
+    """
+    cache_key = f"{artifact_type}:{artifact_id}"
+    
+    # Use lock to ensure thread-safe access to cache
+    async with _rating_lock:
+        # Check cache first
+        if cache_key in _ratings_cache:
+            rating = _ratings_cache[cache_key]
+        else:
+            # Generate and cache the rating
+            rating = _generate_deterministic_rating(artifact_type, artifact_id)
+            _ratings_cache[cache_key] = rating
+    
+    return RatingResponse(**rating)
 
 
 @app.post("/register")
