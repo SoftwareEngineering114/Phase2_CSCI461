@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trustworthy Model Registry - Frontend</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .endpoint {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+        }
+        .endpoint code {
+            display: block;
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #e9ecef;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Trustworthy Model Registry</h1>
+        <div class="status success">
+            ✅ Frontend service is running
+        </div>
+        
+        <p>This is the frontend interface for the Trustworthy Model Registry API.</p>
+        
+        <div class="endpoint">
+            <strong>Health Check Endpoint:</strong>
+            <code>http://3.14.4.22/health</code>
+        </div>
+        
+        <div class="endpoint">
+            <strong>Models List Endpoint:</strong>
+            <code>http://3.14.4.22/models</code>
+        </div>
+        
+        <div class="endpoint">
+            <strong>Register Endpoint:</strong>
+            <code>http://3.14.4.22/register</code>
+        </div>
+        
+        <p><em>Note: Full API functionality will be implemented in future iterations.</em></p>
+    </div>
+</body>
+</html>
+

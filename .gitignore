@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Env
+.env
+.env.local
+
+# Logs
+logs/
+
+# Virtualenv (project and global)
+venv/
+.venv/
+
+# Coverage
+htmlcov/
+.coverage
+
+# PyCharm / VSCode
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Build / packaging artifacts
+dist/
+build/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+
+# Exclude SSH keys and sensitive files
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+test_key*
+*ssh_test*
+
+# CI/CD SSH keys
+my-ci-key*
