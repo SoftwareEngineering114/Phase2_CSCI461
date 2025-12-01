@@ -19,13 +19,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        working-directory: CSCI461
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run tests
-        working-directory: CSCI461
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           MODELS_TABLE: models
@@ -45,12 +43,10 @@ jobs:
           pip install aws-sam-cli
 
       - name: SAM Build
-        working-directory: CSCI461
         run: |
           sam build --use-container --template template.yml
 
       - name: SAM Deploy
-        working-directory: CSCI461
         run: |
           sam deploy \
             --stack-name model-registry \
