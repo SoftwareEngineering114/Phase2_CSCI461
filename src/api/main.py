@@ -108,9 +108,9 @@ async def health_check() -> dict[str, str]:
     Health check endpoint.
     
     Returns:
-        HTTP 200 with status "healthy" when service is up.
+        HTTP 200 with status "OK" when service is up.
     """
-    return {"status": "healthy"}
+    return {"status": "OK"}
 
 
 @app.get("/health/components")
@@ -122,8 +122,8 @@ async def health_components() -> dict[str, dict[str, str]]:
         HTTP 200 with health status of each service component.
     """
     return {
-        "api": {"status": "healthy"},
-        "database": {"status": "healthy"}
+        "api": {"status": "OK"},
+        "database": {"status": "OK"}
     }
 
 
