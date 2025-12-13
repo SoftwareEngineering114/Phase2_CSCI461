@@ -88,3 +88,61 @@ def test_lineage_uses_real_ingested_base_model_id_when_present(monkeypatch: pyte
     assert {"from_node_artifact_id": aid, "to_node_artifact_id": bid, "relationship": "base_model"} in edges
 
 
+def test_lineage_includes_dependencies_from_stored_metadata() -> None:
+    client = TestClient(app)
+    tok = client.put(
+        "/authenticate",
+        json={
+            "user": {"name": "ece30861defaultadminuser", "is_admin": True},
+            "secret": {"password": "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"},
+        },
+    ).json()
+
+    # Ingest dependency artifacts first so lineage can map to real ids.
+    base = client.post(
+        "/artifact/model",
+        json={"url": "https://huggingface.co/org/base-model"},
+        headers={"X-Authorization": tok},
+    ).json()
+    ds = client.post(
+        "/artifact/dataset",
+        json={"url": "https://huggingface.co/datasets/org/my-dataset"},
+        headers={"X-Authorization": tok},
+    ).json()
+    code = client.post(
+        "/artifact/code",
+        json={"url": "https://github.com/org/train-code"},
+        headers={"X-Authorization": tok},
+    ).json()
+
+    base_id = base["metadata"]["id"]
+    ds_id = ds["metadata"]["id"]
+    code_id = code["metadata"]["id"]
+
+    # Ingest the child model with dependency metadata.
+    child = client.post(
+        "/artifact/model",
+        json={
+            "url": "https://huggingface.co/org/child-model",
+            "metadata": {
+                "base_model": "org/base-model",
+                "datasets": ["org/my-dataset"],
+                "training_code": "https://github.com/org/train-code",
+            },
+        },
+        headers={"X-Authorization": tok},
+    ).json()
+    child_id = child["metadata"]["id"]
+
+    lin = client.get(f"/artifact/model/{child_id}/lineage", headers={"X-Authorization": tok}).json()
+    node_ids = {n.get("artifact_id") for n in lin.get("nodes", [])}
+    assert child_id in node_ids
+    assert base_id in node_ids
+    assert ds_id in node_ids
+    assert code_id in node_ids
+
+    edges = lin.get("edges", [])
+    assert {"from_node_artifact_id": base_id, "to_node_artifact_id": child_id, "relationship": "base_model"} in edges
+    assert {"from_node_artifact_id": ds_id, "to_node_artifact_id": child_id, "relationship": "fine_tuning_dataset"} in edges
+    assert {"from_node_artifact_id": code_id, "to_node_artifact_id": child_id, "relationship": "training_code"} in edges
+

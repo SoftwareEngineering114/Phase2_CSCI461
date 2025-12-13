@@ -55,6 +55,7 @@ class _StoredArtifact:
     name: str
     url: str
     created_at_ms: int
+    metadata: Dict[str, Any]
 
 
 _artifacts_by_id: Dict[str, _StoredArtifact] = {}
@@ -149,6 +150,26 @@ def _regex_compile(pattern: str) -> re.Pattern[str]:
 class ArtifactData(BaseModel):
     url: str = Field(..., format="uri")
     download_url: Optional[str] = Field(default=None, readOnly=True)
+
+
+class ArtifactCreateRequest(BaseModel):
+    """
+    Request body for ingesting an artifact.
+
+    The spec only requires `url`, but we accept optional dependency metadata
+    so lineage can be computed from stored fields when present.
+    """
+
+    url: str = Field(..., format="uri")
+    metadata: Optional[Dict[str, Any]] = None
+    base_model: Optional[Any] = None
+    datasets: Optional[Any] = None
+    dataset: Optional[Any] = None
+    code: Optional[Any] = None
+    training_code: Optional[Any] = None
+    code_repo: Optional[Any] = None
+    code_url: Optional[Any] = None
+    training_code_url: Optional[Any] = None
 
 
 class ArtifactMetadata(BaseModel):
@@ -303,7 +324,7 @@ async def reset(x_authorization: Optional[str] = Header(default=None, alias="X-A
 async def artifact_create(
     artifact_type: ArtifactType,
     request: Request,
-    body: ArtifactData = Body(...),
+    body: ArtifactCreateRequest = Body(...),
     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
 ) -> Artifact:
     _require_token(x_authorization)
@@ -321,12 +342,32 @@ async def artifact_create(
 
     name = _parse_name(url)
     artifact_id = _new_artifact_id(artifact_type, url)
+    stored_metadata: Dict[str, Any] = {}
+    if isinstance(body.metadata, dict):
+        stored_metadata.update(body.metadata)
+
+    # Promote common dependency fields to metadata for lineage computation.
+    for k in (
+        "base_model",
+        "datasets",
+        "dataset",
+        "code",
+        "training_code",
+        "code_repo",
+        "code_url",
+        "training_code_url",
+    ):
+        v = getattr(body, k, None)
+        if v is not None:
+            stored_metadata[k] = v
+
     _artifacts_by_id[artifact_id] = _StoredArtifact(
         id=artifact_id,
         type=artifact_type,
         name=name,
         url=url,
         created_at_ms=_now_ms(),
+        metadata=stored_metadata,
     )
     _artifact_id_by_type_and_url[key] = artifact_id
 
@@ -454,6 +495,7 @@ async def artifact_update(
         name=body.metadata.name,
         url=new_url,
         created_at_ms=existing.created_at_ms,
+        metadata=existing.metadata,
     )
     return {"status": "updated"}
 
@@ -565,6 +607,54 @@ def _external_lineage_id(kind: str, name: str) -> str:
     return f"hf:{kind}:{(name or '').strip()}"
 
 
+def _find_ingested_artifact_id_by_url(artifact_type: ArtifactType, url: str) -> Optional[str]:
+    wanted = (url or "").strip().lower()
+    if not wanted:
+        return None
+    for a in _artifacts_by_id.values():
+        if a.type == artifact_type and (a.url or "").strip().lower() == wanted:
+            return a.id
+    return None
+
+
+def _as_list(v: Any) -> List[Any]:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    return [v]
+
+
+def _extract_dependency_specs(meta: Dict[str, Any]) -> List[Tuple[str, ArtifactType, str]]:
+    """
+    Return a list of (relationship, artifact_type, identifier_or_url) dependencies found in stored metadata.
+    """
+    out: List[Tuple[str, ArtifactType, str]] = []
+    if not isinstance(meta, dict):
+        return out
+
+    # base model(s)
+    for bm in _as_list(meta.get("base_model")):
+        if bm is not None:
+            out.append(("base_model", "model", str(bm)))
+
+    # datasets can be stored under datasets/dataset
+    for ds in _as_list(meta.get("datasets")) + _as_list(meta.get("dataset")):
+        if ds is not None:
+            out.append(("fine_tuning_dataset", "dataset", str(ds)))
+
+    # training code / code repo
+    for code in _as_list(meta.get("training_code")) + _as_list(meta.get("training_code_url")):
+        if code is not None:
+            out.append(("training_code", "code", str(code)))
+
+    for code in _as_list(meta.get("code")) + _as_list(meta.get("code_repo")) + _as_list(meta.get("code_url")):
+        if code is not None:
+            out.append(("code", "code", str(code)))
+
+    return out
+
+
 def _find_ingested_artifact_id_by_identifier(artifact_type: ArtifactType, identifier: str) -> Optional[str]:
     """
     Best-effort mapping from HF card identifiers (e.g. "org/model" or "model")
@@ -605,6 +695,7 @@ def _lineage_for_model_url(
     root_artifact_id: str,
     root_name: str,
     url: str,
+    stored_metadata: Dict[str, Any],
 ) -> Tuple[List[ArtifactLineageNode], List[ArtifactLineageEdge]]:
     nodes: Dict[str, ArtifactLineageNode] = {}
     edges: List[ArtifactLineageEdge] = []
@@ -617,6 +708,29 @@ def _lineage_for_model_url(
         source="config_json",
         metadata=None,
     )
+
+    # 1) Dependencies explicitly provided in stored metadata (preferred; stable).
+    for relationship, dep_type, dep in _extract_dependency_specs(stored_metadata):
+        dep_id: Optional[str] = None
+        dep_name = dep
+
+        if dep.startswith("http://") or dep.startswith("https://"):
+            dep_id = _find_ingested_artifact_id_by_url(dep_type, dep)
+            dep_name = _parse_name(dep) if dep_id is None else dep_name
+        if dep_id is None:
+            dep_id = _find_ingested_artifact_id_by_identifier(dep_type, dep)
+
+        if dep_id is None:
+            dep_id = _external_lineage_id(dep_type, dep)
+
+        nodes.setdefault(dep_id, ArtifactLineageNode(artifact_id=dep_id, name=dep_name, source="config_json"))
+        edges.append(
+            ArtifactLineageEdge(
+                from_node_artifact_id=dep_id,
+                to_node_artifact_id=root_node_id,
+                relationship=relationship,
+            )
+        )
 
     try:
         # Lazy import to keep startup lightweight.
@@ -668,8 +782,17 @@ def _lineage_for_model_url(
     except Exception:
         pass
 
+    # Dedupe edges
+    seen_edges: Set[Tuple[str, str, str]] = set()
+    deduped_edges: List[ArtifactLineageEdge] = []
+    for e in edges:
+        key = (e.from_node_artifact_id, e.to_node_artifact_id, e.relationship)
+        if key not in seen_edges:
+            seen_edges.add(key)
+            deduped_edges.append(e)
+
     node_list = sorted(nodes.values(), key=lambda n: n.artifact_id)
-    edge_list = sorted(edges, key=lambda e: (e.from_node_artifact_id, e.to_node_artifact_id, e.relationship))
+    edge_list = sorted(deduped_edges, key=lambda e: (e.from_node_artifact_id, e.to_node_artifact_id, e.relationship))
     return node_list, edge_list
 
 
@@ -684,7 +807,12 @@ async def model_lineage(
     if not a or a.type != "model":
         raise HTTPException(status_code=404, detail="Artifact does not exist.")
 
-    nodes, edges = _lineage_for_model_url(root_artifact_id=id, root_name=a.name, url=a.url)
+    nodes, edges = _lineage_for_model_url(
+        root_artifact_id=id,
+        root_name=a.name,
+        url=a.url,
+        stored_metadata=a.metadata,
+    )
     return ArtifactLineageGraph(nodes=nodes, edges=edges)
 
 
@@ -715,7 +843,12 @@ async def artifact_cost(
 
     total = standalone
     if artifact_type == "model":
-        nodes, _edges = _lineage_for_model_url(root_artifact_id=id, root_name=a.name, url=a.url)
+        nodes, _edges = _lineage_for_model_url(
+            root_artifact_id=id,
+            root_name=a.name,
+            url=a.url,
+            stored_metadata=a.metadata,
+        )
         # Nodes without an explicit URL represent external deps; count them as small fixed costs.
         total += float(max(0, len(nodes) - 1) * 25)
 
