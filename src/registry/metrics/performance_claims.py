@@ -3,6 +3,7 @@ Performance claims metric: measures presence of benchmarks and evaluations.
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Dict, Tuple
 
@@ -27,21 +28,47 @@ class PerformanceClaimsMetric:
             repo_info: Context containing 'hf_readme' key
             
         Returns:
-            Tuple of (score, latency_ms) where score is 0.0 or 1.0
+            Tuple of (score, latency_ms).
+            Uses a conservative tiered approach to avoid over-crediting vague claims:
+            - 1.0: strong evidence (benchmark keyword + numeric metric)
+            - 0.5: weak evidence (benchmark keyword but no numbers)
+            - 0.0: no evidence
         """
         t0 = time.perf_counter()
         
         try:
-            readme = repo_info.get("hf_readme", "")
-            readme_lower = readme.lower()
-            
-            has_claims = (
-                "benchmark" in readme_lower
-                or "accuracy" in readme_lower
-                or "eval" in readme_lower
+            readme = (repo_info.get("hf_readme", "") or "")
+            text = readme.lower()
+
+            # Require more than "eval" appearing as part of a random token.
+            has_keywords = any(
+                k in text
+                for k in (
+                    "benchmark",
+                    "benchmarks",
+                    "accuracy",
+                    "evaluation",
+                    "evaluated",
+                    "results",
+                    "f1",
+                    "bleu",
+                    "rouge",
+                    "perplexity",
+                    "mmlu",
+                    "hellaswag",
+                    "truthfulqa",
+                )
             )
-            
-            score = 1.0 if has_claims else 0.0
+
+            # Numeric evidence: percentages or decimals commonly used for metrics.
+            has_numbers = bool(re.search(r"(\b\d{1,3}(\.\d+)?\s*%|\b0\.\d+\b|\b\d+\.\d+\b)", text))
+
+            if has_keywords and has_numbers:
+                score = 1.0
+            elif has_keywords:
+                score = 0.5
+            else:
+                score = 0.0
             
         except Exception:
             score = 0.0

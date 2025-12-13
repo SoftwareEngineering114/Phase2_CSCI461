@@ -27,18 +27,39 @@ class DatasetAndCodeScoreMetric:
             repo_info: Context containing 'dataset_link' and 'example_code_present' keys
             
         Returns:
-            Tuple of (score, latency_ms) where score is 0.0, 0.5, or 1.0
+            Tuple of (score, latency_ms).
+            Conservative scoring:
+            - 1.0: dataset + code both present AND referenced in README
+            - 0.5: dataset OR code present AND referenced in README
+            - 0.25: dataset OR code provided via context only (not referenced)
+            - 0.0: neither present
         """
         t0 = time.perf_counter()
         
         try:
-            has_dataset = bool(repo_info.get("dataset_link"))
-            has_example_code = bool(repo_info.get("example_code_present"))
-            
-            if has_dataset and has_example_code:
+            dataset_link = str(repo_info.get("dataset_link") or "")
+            code_link = str(repo_info.get("code_link") or "")
+            has_dataset = bool(dataset_link)
+            has_code = bool(code_link) or bool(repo_info.get("example_code_present"))
+
+            readme = (repo_info.get("hf_readme", "") or "").lower()
+
+            def mentioned(link: str) -> bool:
+                if not link:
+                    return False
+                # Accept either the full URL or a reasonable slug being mentioned.
+                slug = link.rstrip("/").split("/")[-1].lower()
+                return (link.lower() in readme) or (slug and slug in readme)
+
+            dataset_mentioned = has_dataset and mentioned(dataset_link)
+            code_mentioned = has_code and mentioned(code_link)
+
+            if dataset_mentioned and code_mentioned:
                 score = 1.0
-            elif has_dataset or has_example_code:
+            elif dataset_mentioned or code_mentioned:
                 score = 0.5
+            elif has_dataset or has_code:
+                score = 0.25
             else:
                 score = 0.0
             
