@@ -255,8 +255,6 @@ async def tracks() -> Dict[str, List[str]]:
         "plannedTracks": [
             "Performance track",
             "Access control track",
-            "High assurance track",
-            "Other Security track",
         ]
     }
 

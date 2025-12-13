@@ -13,8 +13,6 @@ def test_tracks_returns_exact_spec_json() -> None:
         "plannedTracks": [
             "Performance track",
             "Access control track",
-            "High assurance track",
-            "Other Security track",
         ]
     }
 
