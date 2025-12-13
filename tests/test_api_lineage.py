@@ -9,10 +9,13 @@ from src.api.main import app
 def test_lineage_root_node_uses_requested_id() -> None:
     client = TestClient(app)
 
-    # Authenticate (always succeeds)
+    # Authenticate
     tok = client.put(
         "/authenticate",
-        json={"user": {"name": "x", "is_admin": True}, "secret": {"password": "y"}},
+        json={
+            "user": {"name": "ece30861defaultadminuser", "is_admin": True},
+            "secret": {"password": "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"},
+        },
     ).json()
 
     # Ingest a model
@@ -53,7 +56,10 @@ def test_lineage_uses_real_ingested_base_model_id_when_present(monkeypatch: pyte
     client = TestClient(app)
     tok = client.put(
         "/authenticate",
-        json={"user": {"name": "x", "is_admin": True}, "secret": {"password": "y"}},
+        json={
+            "user": {"name": "ece30861defaultadminuser", "is_admin": True},
+            "secret": {"password": "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"},
+        },
     ).json()
 
     a = client.post(

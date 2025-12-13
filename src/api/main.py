@@ -61,6 +61,10 @@ _artifacts_by_id: Dict[str, _StoredArtifact] = {}
 _artifact_id_by_type_and_url: Dict[Tuple[ArtifactType, str], str] = {}
 _auth_tokens: Set[str] = set()
 
+# Spec default credential (Phase 2)
+_DEFAULT_ADMIN_USER = "ece30861defaultadminuser"
+_DEFAULT_ADMIN_PASSWORD = "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"
+
 
 @app.exception_handler(RequestValidationError)
 async def _validation_error_to_400(_request: Request, _exc: RequestValidationError) -> JSONResponse:
@@ -266,10 +270,15 @@ async def tracks() -> Dict[str, List[str]]:
 
 @app.put("/authenticate")
 async def authenticate(
-    _req: AuthenticationRequest = Body(...),
+    req: AuthenticationRequest = Body(...),
 ) -> str:
-    # Always succeed for autograder: return a JSON string token (NOT an object).
-    return "bearer test-token"
+    # Spec-compliant auth: return a JSON string token on success; 401 on invalid credentials.
+    if req.user.name != _DEFAULT_ADMIN_USER or req.secret.password != _DEFAULT_ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="The user or password is invalid.")
+
+    tok = f"bearer {secrets.token_urlsafe(24)}"
+    _auth_tokens.add(tok)
+    return tok
 
 
 # ----------------------------
