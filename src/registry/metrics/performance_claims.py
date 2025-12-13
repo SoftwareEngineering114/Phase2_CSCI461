@@ -30,8 +30,9 @@ class PerformanceClaimsMetric:
         Returns:
             Tuple of (score, latency_ms).
             Uses a conservative tiered approach to avoid over-crediting vague claims:
-            - 1.0: strong evidence (benchmark keyword + numeric metric)
-            - 0.5: weak evidence (benchmark keyword but no numbers)
+            - 1.0: benchmark keyword AND metric keyword AND numeric evidence
+            - 0.5: benchmark keyword AND metric keyword (but no numbers)
+            - 0.25: metric keyword only (weak evidence)
             - 0.0: no evidence
         """
         t0 = time.perf_counter()
@@ -40,16 +41,11 @@ class PerformanceClaimsMetric:
             readme = (repo_info.get("hf_readme", "") or "")
             text = readme.lower()
 
-            # Require more than "eval" appearing as part of a random token.
-            has_keywords = any(
+            benchmark_keyword = any(k in text for k in ("benchmark", "benchmarks", "leaderboard", "sota"))
+            metric_keyword = any(
                 k in text
                 for k in (
-                    "benchmark",
-                    "benchmarks",
                     "accuracy",
-                    "evaluation",
-                    "evaluated",
-                    "results",
                     "f1",
                     "bleu",
                     "rouge",
@@ -57,16 +53,21 @@ class PerformanceClaimsMetric:
                     "mmlu",
                     "hellaswag",
                     "truthfulqa",
+                    "precision",
+                    "recall",
+                    "auc",
                 )
             )
 
             # Numeric evidence: percentages or decimals commonly used for metrics.
             has_numbers = bool(re.search(r"(\b\d{1,3}(\.\d+)?\s*%|\b0\.\d+\b|\b\d+\.\d+\b)", text))
 
-            if has_keywords and has_numbers:
+            if benchmark_keyword and metric_keyword and has_numbers:
                 score = 1.0
-            elif has_keywords:
+            elif benchmark_keyword and metric_keyword:
                 score = 0.5
+            elif metric_keyword:
+                score = 0.25
             else:
                 score = 0.0
             

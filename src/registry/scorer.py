@@ -24,6 +24,68 @@ from .url_parser import classify_url, fetch_repo_info, parse_url
 LOG = get_logger(__name__)
 
 
+def enrich_context(repo_info: Dict[str, Any]) -> None:
+    """
+    Enrich repo_info using dataset_link + code_link context.
+
+    - If dataset_link is a HuggingFace dataset URL, fetch dataset downloads.
+    - If code_link is a GitHub URL, populate has_tests/has_ci signals from that repo.
+    - If model is HuggingFace, fetch README.md content via hf_hub_download().
+
+    Never raises: logs and returns on failure.
+    """
+
+    # 1) Dataset downloads from HF dataset URL
+    try:
+        dataset_link = str(repo_info.get("dataset_link") or "")
+        if "huggingface.co/datasets/" in dataset_link.lower():
+            from huggingface_hub import dataset_info
+
+            # huggingface.co/datasets/<repo_id>/...
+            tail = dataset_link.split("huggingface.co/datasets/", 1)[1].strip("/")
+            repo_id = "/".join([p for p in tail.split("/") if p][:2]) if "/" in tail else tail
+            if repo_id:
+                ds = dataset_info(repo_id)
+                ds_dict = ds.to_dict() if hasattr(ds, "to_dict") else {}
+                downloads = ds_dict.get("downloads", 0) or 0
+                repo_info["dataset_downloads"] = int(downloads)
+    except Exception as e:
+        LOG.debug("Context enrich: dataset_info failed: %s", e)
+
+    # 2) Code repo signals from GitHub code_link
+    try:
+        code_link = str(repo_info.get("code_link") or "")
+        if "github.com" in code_link.lower():
+            code_info = fetch_repo_info(code_link)
+            # Prefer code repo's engineering signals for code_quality
+            for k in ("has_tests", "has_ci", "lint_ok", "lint_warn", "git_contributors"):
+                if k in code_info:
+                    repo_info[k] = code_info[k]
+    except Exception as e:
+        LOG.debug("Context enrich: code repo analysis failed: %s", e)
+
+    # 3) HF model README.md via hf_hub_download
+    try:
+        url = str(repo_info.get("url") or "")
+        if "huggingface.co" in url.lower() and "hf_readme" in repo_info:
+            from huggingface_hub import hf_hub_download
+
+            # Extract repo_id as org/model (ignore /tree/..., /blob/..., etc.)
+            tail = url.split("huggingface.co/", 1)[1].strip("/")
+            parts = [p for p in tail.split("/") if p]
+            repo_id = "/".join(parts[:2]) if len(parts) >= 2 else ""
+            if repo_id:
+                try:
+                    path = hf_hub_download(repo_id=repo_id, filename="README.md")
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        repo_info["hf_readme"] = f.read()
+                except Exception:
+                    # Leave existing hf_readme as-is (may be empty)
+                    pass
+    except Exception as e:
+        LOG.debug("Context enrich: hf_hub_download failed: %s", e)
+
+
 def score_model(url: str, related_context: Dict[str, Any]) -> ModelScore:
     """
     Score a model URL and return complete ModelScore.
@@ -63,6 +125,9 @@ def score_model(url: str, related_context: Dict[str, Any]) -> ModelScore:
     LOG.debug("Context includes dataset_link=%s, code_link=%s", 
               related_context.get("dataset_link", "None"), 
               related_context.get("code_link", "None"))
+
+    # Enrich model repo_info with signals from dataset/code context
+    enrich_context(repo_info)
     
     # Initialize all metrics
     metrics: List[Metric] = [
