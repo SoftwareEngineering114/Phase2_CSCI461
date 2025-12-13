@@ -542,30 +542,62 @@ async def model_rate(
 # ----------------------------
 
 
-def _find_ingested_artifact_id_by_name(artifact_type: ArtifactType, name: str) -> Optional[str]:
+def _name_variants(s: str) -> Set[str]:
+    raw = (s or "").strip()
+    if not raw:
+        return set()
+    lower = raw.lower()
+    leaf = lower.split("/")[-1]
+    # Some card fields include "@revision" or similar suffixes.
+    leaf = leaf.split("@", 1)[0]
+    return {lower, leaf}
+
+
+def _find_ingested_artifact_id_by_identifier(artifact_type: ArtifactType, identifier: str) -> Optional[str]:
     """
-    Return a real registry id when an artifact with the same (type, name) was ingested.
+    Best-effort mapping from HF card identifiers (e.g. "org/model" or "model")
+    to a real ingested artifact id.
+
+    Matching strategy (case-insensitive):
+    - exact name match
+    - leaf name match (after last '/')
+    - identifier substring contained in stored URL
+    - leaf substring contained in stored URL
     """
+    wanted = _name_variants(identifier)
+    if not wanted:
+        return None
+
     for a in _artifacts_by_id.values():
-        if a.type == artifact_type and a.name == name:
+        if a.type != artifact_type:
+            continue
+        a_name = (a.name or "").strip().lower()
+        a_leaf = a_name.split("/")[-1]
+        a_url = (a.url or "").strip().lower()
+
+        if a_name in wanted or a_leaf in wanted:
             return a.id
+        for w in wanted:
+            if w and (w in a_url):
+                return a.id
+
     return None
 
 
 def _lineage_for_model_url(
     *,
     root_artifact_id: str,
+    root_name: str,
     url: str,
 ) -> Tuple[List[ArtifactLineageNode], List[ArtifactLineageEdge]]:
     nodes: Dict[str, ArtifactLineageNode] = {}
     edges: List[ArtifactLineageEdge] = []
 
     # Root node MUST use the real registry id the client queried.
-    model_name = _parse_name(url)
     root_node_id = root_artifact_id
     nodes[root_node_id] = ArtifactLineageNode(
         artifact_id=root_node_id,
-        name=model_name,
+        name=root_name,
         source="config_json",
         metadata={"url": url},
     )
@@ -594,7 +626,7 @@ def _lineage_for_model_url(
             dataset_list = [str(x) for x in datasets if x]
 
         for bm in base_models:
-            bm_real = _find_ingested_artifact_id_by_name("model", bm)
+            bm_real = _find_ingested_artifact_id_by_identifier("model", bm)
             bm_id = bm_real or _hash_id(f"model:{bm}")
             nodes.setdefault(bm_id, ArtifactLineageNode(artifact_id=bm_id, name=bm, source="config_json"))
             edges.append(
@@ -606,7 +638,7 @@ def _lineage_for_model_url(
             )
 
         for ds in dataset_list:
-            ds_real = _find_ingested_artifact_id_by_name("dataset", ds)
+            ds_real = _find_ingested_artifact_id_by_identifier("dataset", ds)
             ds_id = ds_real or _hash_id(f"dataset:{ds}")
             nodes.setdefault(ds_id, ArtifactLineageNode(artifact_id=ds_id, name=ds, source="config_json"))
             edges.append(
@@ -634,7 +666,7 @@ async def model_lineage(
     if not a or a.type != "model":
         raise HTTPException(status_code=404, detail="Artifact does not exist.")
 
-    nodes, edges = _lineage_for_model_url(root_artifact_id=id, url=a.url)
+    nodes, edges = _lineage_for_model_url(root_artifact_id=id, root_name=a.name, url=a.url)
     return ArtifactLineageGraph(nodes=nodes, edges=edges)
 
 
@@ -665,7 +697,7 @@ async def artifact_cost(
 
     total = standalone
     if artifact_type == "model":
-        nodes, _edges = _lineage_for_model_url(a.url)
+        nodes, _edges = _lineage_for_model_url(root_artifact_id=id, root_name=a.name, url=a.url)
         # Nodes without an explicit URL represent external deps; count them as small fixed costs.
         total += float(max(0, len(nodes) - 1) * 25)
 
