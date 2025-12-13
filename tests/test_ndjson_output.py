@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import json
 
-from registry.models import ModelScore
-from registry.ndjson_output import modelscore_to_ndjson_line
+from src.registry.models import ModelScore
+from src.registry.ndjson_output import modelscore_to_ndjson_line
 
 
 def test_modelscore_to_ndjson_line_valid_json() -> None:

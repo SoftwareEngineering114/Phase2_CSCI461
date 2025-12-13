@@ -1,6 +1,6 @@
 from __future__ import annotations
-from cli.url_types import parse_url
-from cli.metrics import compute_all_metrics, compute_net_score
+from src.cli.url_types import parse_url
+from src.cli.metrics import compute_all_metrics, compute_net_score
 
 def test_parse_model():
     p = parse_url("https://huggingface.co/google/gemma-3-270m/tree/main")

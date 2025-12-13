@@ -10,8 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [ { name = "CSCI461 Team" } ]
 
+[tool.setuptools]
+# Treat the top-level `src/` folder as a real Python package (tests import `src.*`).
+package-dir = {"" = "."}
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["src*"]
 
 # Flake8 configuration (in setup.cfg or .flake8 file)
 # See setup.cfg for flake8 config

@@ -30,8 +30,8 @@ from fastapi.responses import HTMLResponse
 from mangum import Mangum
 from pydantic import BaseModel, Field
 
-from registry.scorer import score_model
-from registry.url_parser import parse_url
+from src.registry.scorer import score_model
+from src.registry.url_parser import parse_url
 
 ArtifactType = Literal["model", "dataset", "code"]
 
@@ -761,7 +761,7 @@ async def artifact_audit(
 async def frontend() -> str:
     return """<!doctype html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="ECE461 Phase 2 Trustworthy Model Registry UI" />
@@ -777,8 +777,8 @@ async def frontend() -> str:
       .skip { position: absolute; left: -999px; top: auto; width: 1px; height: 1px; overflow: hidden; }
       .skip:focus { position: static; width: auto; height: auto; padding: 8px; background: #fff; }
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <a class="skip" href="#main">Skip to content</a>
     <header>
       <h1 style="margin:0;font-size:20px;">Trustworthy Model Registry</h1>
@@ -792,9 +792,9 @@ async def frontend() -> str:
           <li><a href="/health">Health</a></li>
           <li><a href="/tracks">Tracks</a></li>
         </ul>
-      </div>
+    </div>
     </main>
-  </body>
+</body>
 </html>"""
 
 

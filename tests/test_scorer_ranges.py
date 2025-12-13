@@ -7,8 +7,8 @@ from typing import Any, Dict
 
 import pytest
 
-from registry.models import ModelScore
-from registry.scorer import score_model
+from src.registry.models import ModelScore
+from src.registry.scorer import score_model
 
 
 def test_score_model_returns_modelscore(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,15 +55,15 @@ def test_score_model_returns_modelscore(monkeypatch: pytest.MonkeyPatch) -> None
         return 0.9, 90
     
     # Apply monkeypatches
-    monkeypatch.setattr("registry.scorer.fetch_repo_info", fake_fetch_repo_info)
-    monkeypatch.setattr("registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_ramp_up_compute)
-    monkeypatch.setattr("registry.metrics.bus_factor.BusFactorMetric.compute", fake_bus_factor_compute)
-    monkeypatch.setattr("registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_performance_claims_compute)
-    monkeypatch.setattr("registry.metrics.license_metric.LicenseMetric.compute", fake_license_compute)
-    monkeypatch.setattr("registry.metrics.size_score.SizeScoreMetric.compute", fake_size_score_compute)
-    monkeypatch.setattr("registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_dataset_code_compute)
-    monkeypatch.setattr("registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_dataset_quality_compute)
-    monkeypatch.setattr("registry.metrics.code_quality.CodeQualityMetric.compute", fake_code_quality_compute)
+    monkeypatch.setattr("src.registry.scorer.fetch_repo_info", fake_fetch_repo_info)
+    monkeypatch.setattr("src.registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_ramp_up_compute)
+    monkeypatch.setattr("src.registry.metrics.bus_factor.BusFactorMetric.compute", fake_bus_factor_compute)
+    monkeypatch.setattr("src.registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_performance_claims_compute)
+    monkeypatch.setattr("src.registry.metrics.license_metric.LicenseMetric.compute", fake_license_compute)
+    monkeypatch.setattr("src.registry.metrics.size_score.SizeScoreMetric.compute", fake_size_score_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_dataset_code_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_dataset_quality_compute)
+    monkeypatch.setattr("src.registry.metrics.code_quality.CodeQualityMetric.compute", fake_code_quality_compute)
     
     # Call score_model with spec example URL
     result = score_model("https://huggingface.co/google/gemma-3-270m/tree/main", {})
@@ -84,15 +84,15 @@ def test_score_model_category_is_model(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_size_compute(self: Any, repo_info: Dict[str, Any]) -> tuple[Dict[str, float], int]:
         return {"raspberry_pi": 0.5, "jetson_nano": 0.5, "desktop_pc": 0.5, "aws_server": 0.5}, 10
     
-    monkeypatch.setattr("registry.scorer.fetch_repo_info", fake_fetch_repo_info)
-    monkeypatch.setattr("registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
-    monkeypatch.setattr("registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.scorer.fetch_repo_info", fake_fetch_repo_info)
+    monkeypatch.setattr("src.registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
     
     result = score_model("https://huggingface.co/google/gemma-3-270m/tree/main", {})
     
@@ -110,15 +110,15 @@ def test_score_model_all_metrics_in_range(monkeypatch: pytest.MonkeyPatch) -> No
     def fake_size_compute(self: Any, repo_info: Dict[str, Any]) -> tuple[Dict[str, float], int]:
         return {"raspberry_pi": 0.3, "jetson_nano": 0.6, "desktop_pc": 0.9, "aws_server": 1.0}, 80
     
-    monkeypatch.setattr("registry.scorer.fetch_repo_info", fake_fetch_repo_info)
-    monkeypatch.setattr("registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
-    monkeypatch.setattr("registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.scorer.fetch_repo_info", fake_fetch_repo_info)
+    monkeypatch.setattr("src.registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
     
     result = score_model("https://huggingface.co/google/gemma-3-270m/tree/main", {})
     
@@ -147,15 +147,15 @@ def test_score_model_net_score_in_range(monkeypatch: pytest.MonkeyPatch) -> None
     def fake_size_compute(self: Any, repo_info: Dict[str, Any]) -> tuple[Dict[str, float], int]:
         return {"raspberry_pi": 0.5, "jetson_nano": 0.5, "desktop_pc": 0.5, "aws_server": 0.5}, 30
     
-    monkeypatch.setattr("registry.scorer.fetch_repo_info", fake_fetch_repo_info)
-    monkeypatch.setattr("registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
-    monkeypatch.setattr("registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.scorer.fetch_repo_info", fake_fetch_repo_info)
+    monkeypatch.setattr("src.registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
     
     result = score_model("https://huggingface.co/google/gemma-3-270m/tree/main", {})
     
@@ -173,15 +173,15 @@ def test_score_model_latencies_are_positive_ints(monkeypatch: pytest.MonkeyPatch
     def fake_size_compute(self: Any, repo_info: Dict[str, Any]) -> tuple[Dict[str, float], int]:
         return {"raspberry_pi": 0.5, "jetson_nano": 0.5, "desktop_pc": 0.5, "aws_server": 0.5}, 77
     
-    monkeypatch.setattr("registry.scorer.fetch_repo_info", fake_fetch_repo_info)
-    monkeypatch.setattr("registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
-    monkeypatch.setattr("registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
-    monkeypatch.setattr("registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.scorer.fetch_repo_info", fake_fetch_repo_info)
+    monkeypatch.setattr("src.registry.metrics.ramp_up_time.RampUpTimeMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.bus_factor.BusFactorMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.performance_claims.PerformanceClaimsMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.license_metric.LicenseMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.size_score.SizeScoreMetric.compute", fake_size_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_and_code_score.DatasetAndCodeScoreMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.dataset_quality.DatasetQualityMetric.compute", fake_compute)
+    monkeypatch.setattr("src.registry.metrics.code_quality.CodeQualityMetric.compute", fake_compute)
     
     result = score_model("https://huggingface.co/google/gemma-3-270m/tree/main", {})
     

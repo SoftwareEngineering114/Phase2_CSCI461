@@ -1,4 +1,4 @@
-from cli import metrics
+from src.cli import metrics
 
 
 def test_size_score_none_weights():

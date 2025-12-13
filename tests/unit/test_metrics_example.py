@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from cli import metrics
+from src.cli import metrics
 
 
 def make_ctx_with_readme(readme_text: str):

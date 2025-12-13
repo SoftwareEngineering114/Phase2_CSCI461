@@ -1,5 +1,5 @@
 import math
-from cli import metrics
+from src.cli import metrics
 
 
 def test_ramp_up_time_examples_and_length():
