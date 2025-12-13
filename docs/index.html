@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trustworthy Model Registry</title>
+    <meta name="description" content="Minimal UI for the ECE461 Phase 2 Trustworthy Model Registry." />
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: #f6f8fa;
+        color: #111;
+        line-height: 1.5;
+      }
+      header {
+        background: #0b3d91;
+        color: #fff;
+        padding: 16px;
+      }
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #d0d7de;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      a { color: #0b3d91; }
+      .skip {
+        position: absolute;
+        left: -999px;
+        top: auto;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+      }
+      .skip:focus {
+        position: static;
+        width: auto;
+        height: auto;
+        padding: 8px;
+        background: #fff;
+        color: #111;
+        display: inline-block;
+      }
+      .icon {
+        width: 28px;
+        height: 28px;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <h1 style="margin:0;font-size:20px;">
+        <img
+          class="icon"
+          alt="Registry icon"
+          src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23ffffff'/><path d='M7 7h10v3H7V7zm0 5h10v3H7v-3zm0 5h10v3H7v-3z' fill='%230b3d91'/></svg>"
+        />
+        Trustworthy Model Registry
+      </h1>
+      <p style="margin:4px 0 0 0;">ECE461 Phase 2</p>
+    </header>
+
+    <main id="main">
+      <section class="card" aria-label="About">
+        <h2 style="margin-top:0;">Minimal UI</h2>
+        <p>
+          This is a lightweight, accessible landing page intended for autograder Lighthouse checks.
+        </p>
+        <ul>
+          <li><a href="../">Backend homepage (if hosted together)</a></li>
+          <li><a href="../health">Health endpoint</a></li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
+
+

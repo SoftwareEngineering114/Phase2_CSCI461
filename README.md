@@ -108,6 +108,12 @@ The package computes the following metrics for MODEL resources:
 - `HUGGINGFACE_HUB_TOKEN`: Improves Hugging Face API rate limits (optional)
 - `GITHUB_TOKEN`: For private repo access or higher GitHub rate limits (optional)
 
+## Frontend (GitHub Pages)
+
+The minimal static UI is deployed via GitHub Pages:
+
+- `https://softwareengineering114.github.io/Phase2_CSCI461/`
+
 ## Development
 
 ### Type Checking
