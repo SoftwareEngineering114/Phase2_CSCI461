@@ -1,3 +1,976 @@
+# """
+# FastAPI application for the Trustworthy Model Registry API.
+
+# Implements the key endpoints described in `ece461_fall_2025_openapi_spec.yaml`.
+# The autograder expects:
+# - `/tracks` to list planned tracks (must include "Access control track")
+# - `/authenticate` to return a token (used as `X-Authorization`)
+# - Artifact ingest/query/delete endpoints
+# - `/artifact/model/{id}/rate` to return Phase-1 metric names (net_score, performance_claims, etc.)
+# - Lineage endpoints to return nodes/edges with expected field names
+# - A simple accessible frontend at `/` (used by Lighthouse)
+
+# State is kept in-memory and is resettable via `/reset`.
+# """
+
+# from __future__ import annotations
+
+# import hashlib
+# import json
+# import re
+# import secrets
+# import time
+# from dataclasses import dataclass
+# from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+
+# from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, Response
+# from fastapi.exceptions import RequestValidationError
+# from fastapi.responses import JSONResponse
+# from fastapi.responses import HTMLResponse
+# from mangum import Mangum
+# from pydantic import BaseModel, Field
+
+# from src.registry.scorer import score_model
+# from src.registry.url_parser import parse_url
+
+# ArtifactType = Literal["model", "dataset", "code"]
+
+
+# app = FastAPI(
+#     title="Trustworthy Model Registry API",
+#     description="ECE461 Phase 2 Trustworthy Model Registry",
+#     version="0.1.0",
+# )
+
+
+# # ----------------------------
+# # In-memory state
+# # ----------------------------
+
+
+# @dataclass(frozen=True)
+# class _StoredArtifact:
+#     id: str
+#     type: ArtifactType
+#     name: str
+#     url: str
+#     created_at_ms: int
+#     metadata: Dict[str, Any]
+
+
+# _artifacts_by_id: Dict[str, _StoredArtifact] = {}
+# _artifact_id_by_type_and_url: Dict[Tuple[ArtifactType, str], str] = {}
+# _auth_tokens: Set[str] = set()
+
+# # Spec default credential (Phase 2)
+# _DEFAULT_ADMIN_USER = "ece30861defaultadminuser"
+# _DEFAULT_ADMIN_PASSWORD = "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"
+
+
+# @app.exception_handler(RequestValidationError)
+# async def _validation_error_to_400(_request: Request, _exc: RequestValidationError) -> JSONResponse:
+#     # Spec uses HTTP 400 for malformed/missing fields; FastAPI defaults to 422.
+#     return JSONResponse(status_code=400, content={"detail": "There is missing field(s) in the request or it is formed improperly."})
+
+
+# # ----------------------------
+# # Helpers
+# # ----------------------------
+
+
+# def _now_ms() -> int:
+#     return int(time.time() * 1000)
+
+
+# def _hash_id(seed: str) -> str:
+#     # Passes spec regex '^[a-zA-Z0-9\\-]+$' and is stable-length.
+#     h = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+#     return str(int(h[:16], 16) % 10_000_000_000).zfill(10)
+
+
+# def _new_artifact_id(artifact_type: ArtifactType, url: str) -> str:
+#     candidate = _hash_id(f"{artifact_type}:{url}:{_now_ms()}:{secrets.token_hex(4)}")
+#     while candidate in _artifacts_by_id:
+#         candidate = _hash_id(f"{artifact_type}:{url}:{_now_ms()}:{secrets.token_hex(6)}")
+#     return candidate
+
+
+# def _parse_name(url: str) -> str:
+#     """
+#     Autograder expects "artifact name" to be the leaf identifier, not "org/name".
+#     Examples:
+#     - HF model:   https://huggingface.co/org/bert-base-uncased -> bert-base-uncased
+#     - HF dataset: https://huggingface.co/datasets/org/bookcorpus -> bookcorpus
+#     - GitHub:     https://github.com/openai/whisper -> whisper
+#     """
+#     s = (url or "").strip()
+#     lower = s.lower()
+#     try:
+#         if "huggingface.co/datasets/" in lower:
+#             tail = s.split("huggingface.co/datasets/", 1)[1]
+#             parts = [p for p in tail.split("/") if p]
+#             return parts[1] if len(parts) >= 2 else (parts[0] if parts else s)
+#         if "huggingface.co/" in lower:
+#             tail = s.split("huggingface.co/", 1)[1]
+#             parts = [p for p in tail.split("/") if p]
+#             return parts[1] if len(parts) >= 2 else (parts[0] if parts else s)
+#         if "github.com/" in lower:
+#             tail = s.split("github.com/", 1)[1]
+#             parts = [p for p in tail.split("/") if p]
+#             return parts[1] if len(parts) >= 2 else (parts[0] if parts else s)
+#     except Exception:
+#         pass
+#     return s.rstrip("/").split("/")[-1] if "/" in s else s
+
+
+# def _require_token(x_authorization: Optional[str]) -> None:
+#     """
+#     Endpoints that require auth accept any token that starts with 'bearer ' (spec example).
+#     """
+#     if not x_authorization:
+#         raise HTTPException(
+#             status_code=403,
+#             detail="Authentication failed due to invalid or missing AuthenticationToken.",
+#         )
+#     if not x_authorization.lower().startswith("bearer "):
+#         raise HTTPException(
+#             status_code=403,
+#             detail="Authentication failed due to invalid or missing AuthenticationToken.",
+#         )
+
+
+# def _artifact_meta(a: _StoredArtifact) -> Dict[str, Any]:
+#     return {"name": a.name, "id": a.id, "type": a.type}
+
+
+# def _download_url(request: Request, artifact_id: str) -> str:
+#     return str(request.base_url).rstrip("/") + f"/download/{artifact_id}"
+
+
+# def _paginate(items: List[Dict[str, Any]], offset: int, page_size: int = 10) -> Tuple[List[Dict[str, Any]], str]:
+#     if offset < 0 or offset > len(items):
+#         offset = 0
+#     page = items[offset : offset + page_size]
+#     next_offset = offset + len(page)
+#     if next_offset >= len(items):
+#         return page, "0"
+#     return page, str(next_offset)
+
+
+# def _regex_compile(pattern: str) -> re.Pattern[str]:
+#     if len(pattern) > 500:
+#         raise HTTPException(status_code=400, detail="There is missing field(s) in the artifact_regex or it is formed improperly, or is invalid")
+#     try:
+#         return re.compile(pattern, re.IGNORECASE)
+#     except re.error:
+#         raise HTTPException(status_code=400, detail="There is missing field(s) in the artifact_regex or it is formed improperly, or is invalid")
+
+
+# # ----------------------------
+# # API models
+# # ----------------------------
+
+
+# class ArtifactData(BaseModel):
+#     url: str = Field(..., format="uri")
+#     download_url: Optional[str] = Field(default=None, readOnly=True)
+
+
+# class ArtifactCreateRequest(BaseModel):
+#     """
+#     Request body for ingesting an artifact.
+
+#     The spec only requires `url`, but we accept optional dependency metadata
+#     so lineage can be computed from stored fields when present.
+#     """
+
+#     url: str = Field(..., format="uri")
+#     metadata: Optional[Dict[str, Any]] = None
+#     base_model: Optional[Any] = None
+#     datasets: Optional[Any] = None
+#     dataset: Optional[Any] = None
+#     code: Optional[Any] = None
+#     training_code: Optional[Any] = None
+#     code_repo: Optional[Any] = None
+#     code_url: Optional[Any] = None
+#     training_code_url: Optional[Any] = None
+
+
+# class ArtifactMetadata(BaseModel):
+#     name: str
+#     id: str
+#     type: ArtifactType
+
+
+# class Artifact(BaseModel):
+#     metadata: ArtifactMetadata
+#     data: ArtifactData
+
+
+# class ArtifactQuery(BaseModel):
+#     name: str
+#     types: Optional[List[ArtifactType]] = None
+
+
+# class ArtifactRegEx(BaseModel):
+#     regex: str
+
+
+# class AuthenticationUser(BaseModel):
+#     name: str
+#     is_admin: bool
+
+
+# class UserAuthenticationInfo(BaseModel):
+#     password: str
+
+
+# class AuthenticationRequest(BaseModel):
+#     user: AuthenticationUser
+#     secret: UserAuthenticationInfo
+
+
+# class SimpleLicenseCheckRequest(BaseModel):
+#     github_url: str
+
+
+# class ModelRating(BaseModel):
+#     # Matches the required Phase-1 metric names that the autograder validates.
+#     name: str
+#     category: str
+#     net_score: float
+#     net_score_latency: float
+#     ramp_up_time: float
+#     ramp_up_time_latency: float
+#     bus_factor: float
+#     bus_factor_latency: float
+#     performance_claims: float
+#     performance_claims_latency: float
+#     license: float
+#     license_latency: float
+#     dataset_and_code_score: float
+#     dataset_and_code_score_latency: float
+#     dataset_quality: float
+#     dataset_quality_latency: float
+#     code_quality: float
+#     code_quality_latency: float
+#     reproducibility: float
+#     reproducibility_latency: float
+#     reviewedness: float
+#     reviewedness_latency: float
+#     tree_score: float
+#     tree_score_latency: float
+#     size_score: Dict[str, float]
+#     size_score_latency: float
+
+
+# class ArtifactLineageNode(BaseModel):
+#     artifact_id: str
+#     name: str
+#     source: str
+#     metadata: Optional[Dict[str, Any]] = None
+
+
+# class ArtifactLineageEdge(BaseModel):
+#     from_node_artifact_id: str
+#     to_node_artifact_id: str
+#     relationship: str
+
+
+# class ArtifactLineageGraph(BaseModel):
+#     nodes: List[ArtifactLineageNode]
+#     edges: List[ArtifactLineageEdge]
+
+
+# # ----------------------------
+# # Health + tracks
+# # ----------------------------
+
+
+# @app.get("/health")
+# async def health_check() -> Dict[str, str]:
+#     return {"status": "OK"}
+
+
+# @app.get("/health/components")
+# async def health_components() -> Dict[str, Dict[str, str]]:
+#     return {"api": {"status": "OK"}, "database": {"status": "OK"}}
+
+
+# @app.get("/tracks")
+# async def tracks() -> Dict[str, List[str]]:
+#     # NOTE: Autograder expects this JSON payload EXACTLY (keys, ordering, casing).
+#     return {
+#         "plannedTracks": [
+#             "Performance track",
+#             "Access control track",
+#             # Autograder also checks this casing in a separate gate before login.
+#             "Access Control Track",
+#         ]
+#     }
+
+
+# # ----------------------------
+# # Auth
+# # ----------------------------
+
+
+# @app.put("/authenticate")
+# async def authenticate(
+#     req: AuthenticationRequest = Body(...),
+# ) -> str:
+#     # Spec-compliant auth: return a JSON string token on success; 401 on invalid credentials.
+#     if req.user.name != _DEFAULT_ADMIN_USER or req.secret.password != _DEFAULT_ADMIN_PASSWORD:
+#         raise HTTPException(status_code=401, detail="The user or password is invalid.")
+
+#     tok = f"bearer {secrets.token_urlsafe(24)}"
+#     _auth_tokens.add(tok)
+#     return tok
+
+
+# # ----------------------------
+# # Reset
+# # ----------------------------
+
+
+# @app.delete("/reset")
+# async def reset(x_authorization: Optional[str] = Header(default=None, alias="X-Authorization")) -> Dict[str, str]:
+#     _require_token(x_authorization)
+#     _artifacts_by_id.clear()
+#     _artifact_id_by_type_and_url.clear()
+#     return {"status": "reset"}
+
+
+# # ----------------------------
+# # Artifact ingest / CRUD
+# # ----------------------------
+
+
+# @app.post("/artifact/{artifact_type}", status_code=201)
+# async def artifact_create(
+#     artifact_type: ArtifactType,
+#     request: Request,
+#     body: ArtifactCreateRequest = Body(...),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Artifact:
+#     _require_token(x_authorization)
+
+#     url = body.url.strip()
+#     if not url:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="There is missing field(s) in the artifact_data or it is formed improperly (must include a single url).",
+#         )
+
+#     key = (artifact_type, url)
+#     if key in _artifact_id_by_type_and_url:
+#         raise HTTPException(status_code=409, detail="Artifact exists already.")
+
+#     name = _parse_name(url)
+#     artifact_id = _new_artifact_id(artifact_type, url)
+#     stored_metadata: Dict[str, Any] = {}
+#     if isinstance(body.metadata, dict):
+#         stored_metadata.update(body.metadata)
+
+#     # Promote common dependency fields to metadata for lineage computation.
+#     for k in (
+#         "base_model",
+#         "datasets",
+#         "dataset",
+#         "code",
+#         "training_code",
+#         "code_repo",
+#         "code_url",
+#         "training_code_url",
+#     ):
+#         v = getattr(body, k, None)
+#         if v is not None:
+#             stored_metadata[k] = v
+
+#     _artifacts_by_id[artifact_id] = _StoredArtifact(
+#         id=artifact_id,
+#         type=artifact_type,
+#         name=name,
+#         url=url,
+#         created_at_ms=_now_ms(),
+#         metadata=stored_metadata,
+#     )
+#     _artifact_id_by_type_and_url[key] = artifact_id
+
+#     return Artifact(
+#         metadata=ArtifactMetadata(name=name, id=artifact_id, type=artifact_type),
+#         data=ArtifactData(url=url, download_url=_download_url(request, artifact_id)),
+#     )
+
+
+# @app.post("/artifacts")
+# async def artifacts_list(
+#     queries: List[ArtifactQuery] = Body(...),
+#     offset: Optional[str] = Query(default=None),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Response:
+#     _require_token(x_authorization)
+
+#     if not queries:
+#         raise HTTPException(status_code=400, detail="There is missing field(s) in the artifact_query or it is formed improperly, or is invalid.")
+
+#     results: Dict[str, Dict[str, Any]] = {}
+#     all_artifacts = list(_artifacts_by_id.values())
+
+#     for q in queries:
+#         q_types = set(q.types or []) if q.types else None
+#         for a in all_artifacts:
+#             if q_types is not None and a.type not in q_types:
+#                 continue
+#             if q.name == "*" or a.name == q.name:
+#                 results[a.id] = _artifact_meta(a)
+
+#     ordered = sorted(results.values(), key=lambda m: (m["name"], m["type"], m["id"]))
+
+#     off = 0
+#     if offset:
+#         try:
+#             off = int(offset)
+#         except Exception:
+#             off = 0
+
+#     # Autograder expects wildcard enumeration to return all artifacts without requiring pagination.
+#     page, next_offset = _paginate(ordered, off, page_size=10_000)
+#     resp = Response(content=json.dumps(page), media_type="application/json")
+#     resp.headers["offset"] = next_offset
+#     return resp
+
+
+# @app.get("/artifact/byName/{name}")
+# async def artifact_by_name(
+#     name: str,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> List[Dict[str, Any]]:
+#     _require_token(x_authorization)
+
+#     matches = [_artifact_meta(a) for a in _artifacts_by_id.values() if a.name == name]
+#     if not matches:
+#         raise HTTPException(status_code=404, detail="No such artifact.")
+#     return sorted(matches, key=lambda m: (m["type"], m["id"]))
+
+
+# @app.post("/artifact/byRegEx")
+# async def artifact_by_regex(
+#     req: ArtifactRegEx = Body(...),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> List[Dict[str, Any]]:
+#     _require_token(x_authorization)
+
+#     compiled = _regex_compile(req.regex)
+#     matches = []
+#     for a in _artifacts_by_id.values():
+#         if compiled.search(a.name) or compiled.search(a.id) or compiled.search(a.url):
+#             matches.append(_artifact_meta(a))
+#     if not matches:
+#         raise HTTPException(status_code=404, detail="No artifact found under this regex.")
+#     return sorted(matches, key=lambda m: (m["name"], m["type"], m["id"]))
+
+
+# @app.get("/artifacts/{artifact_type}/{id}")
+# async def artifact_retrieve(
+#     artifact_type: ArtifactType,
+#     id: str,
+#     request: Request,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Artifact:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != artifact_type:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+#     return Artifact(
+#         metadata=ArtifactMetadata(name=a.name, id=a.id, type=a.type),
+#         data=ArtifactData(url=a.url, download_url=_download_url(request, a.id)),
+#     )
+
+
+# @app.put("/artifacts/{artifact_type}/{id}")
+# async def artifact_update(
+#     artifact_type: ArtifactType,
+#     id: str,
+#     body: Artifact = Body(...),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Dict[str, str]:
+#     _require_token(x_authorization)
+
+#     if body.metadata.id != id or body.metadata.type != artifact_type:
+#         raise HTTPException(status_code=400, detail="There is missing field(s) in the artifact_type or artifact_id or it is formed improperly, or is invalid.")
+
+#     existing = _artifacts_by_id.get(id)
+#     if not existing:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+
+#     new_url = body.data.url.strip()
+#     if not new_url:
+#         raise HTTPException(status_code=400, detail="There is missing field(s) in the artifact_data or it is formed improperly (must include a single url).")
+
+#     old_key = (existing.type, existing.url)
+#     new_key = (artifact_type, new_url)
+#     if new_key != old_key and new_key in _artifact_id_by_type_and_url:
+#         raise HTTPException(status_code=409, detail="Artifact exists already.")
+
+#     _artifact_id_by_type_and_url.pop(old_key, None)
+#     _artifact_id_by_type_and_url[new_key] = id
+#     _artifacts_by_id[id] = _StoredArtifact(
+#         id=id,
+#         type=artifact_type,
+#         name=body.metadata.name,
+#         url=new_url,
+#         created_at_ms=existing.created_at_ms,
+#         metadata=existing.metadata,
+#     )
+#     return {"status": "updated"}
+
+
+# @app.delete("/artifacts/{artifact_type}/{id}")
+# async def artifact_delete(
+#     artifact_type: ArtifactType,
+#     id: str,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Dict[str, str]:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != artifact_type:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+
+#     _artifacts_by_id.pop(id, None)
+#     _artifact_id_by_type_and_url.pop((a.type, a.url), None)
+#     return {"status": "deleted"}
+
+
+# @app.get("/download/{artifact_id}")
+# async def download_artifact(artifact_id: str) -> Response:
+#     a = _artifacts_by_id.get(artifact_id)
+#     if not a:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+#     payload = f"artifact_id={a.id}\ntype={a.type}\nname={a.name}\nurl={a.url}\n".encode("utf-8")
+#     return Response(content=payload, media_type="application/octet-stream")
+
+
+# # ----------------------------
+# # Rating
+# # ----------------------------
+
+
+# @app.get("/artifact/model/{id}/rate")
+# async def model_rate(
+#     id: str,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> ModelRating:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != "model":
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+
+#     # Provide context from most recently ingested dataset/code (helps dataset_and_code_score).
+#     dataset_url = ""
+#     code_url = ""
+#     for other in sorted(_artifacts_by_id.values(), key=lambda x: x.created_at_ms, reverse=True):
+#         if not dataset_url and other.type == "dataset":
+#             dataset_url = other.url
+#         if not code_url and other.type == "code":
+#             code_url = other.url
+#         if dataset_url and code_url:
+#             break
+
+#     ms = score_model(a.url, {"dataset_link": dataset_url, "code_link": code_url})
+
+#     # The Phase-1 scorer doesn't compute the Phase-2-only metrics, so return safe defaults.
+#     return ModelRating(
+#         name=ms.name,
+#         category=ms.category,
+#         net_score=float(ms.net_score),
+#         net_score_latency=float(ms.net_score_latency),
+#         ramp_up_time=float(ms.ramp_up_time),
+#         ramp_up_time_latency=float(ms.ramp_up_time_latency),
+#         bus_factor=float(ms.bus_factor),
+#         bus_factor_latency=float(ms.bus_factor_latency),
+#         performance_claims=float(ms.performance_claims),
+#         performance_claims_latency=float(ms.performance_claims_latency),
+#         license=float(ms.license),
+#         license_latency=float(ms.license_latency),
+#         dataset_and_code_score=float(ms.dataset_and_code_score),
+#         dataset_and_code_score_latency=float(ms.dataset_and_code_score_latency),
+#         dataset_quality=float(ms.dataset_quality),
+#         dataset_quality_latency=float(ms.dataset_quality_latency),
+#         code_quality=float(ms.code_quality),
+#         code_quality_latency=float(ms.code_quality_latency),
+#         reproducibility=0.5,
+#         reproducibility_latency=0.0,
+#         reviewedness=0.5,
+#         reviewedness_latency=0.0,
+#         tree_score=0.5,
+#         tree_score_latency=0.0,
+#         size_score={k: float(v) for k, v in (ms.size_score or {}).items()},
+#         size_score_latency=float(ms.size_score_latency),
+#     )
+
+
+# # ----------------------------
+# # Lineage (best-effort)
+# # ----------------------------
+
+
+# def _name_variants(s: str) -> Set[str]:
+#     raw = (s or "").strip()
+#     if not raw:
+#         return set()
+#     lower = raw.lower()
+#     leaf = lower.split("/")[-1]
+#     # Some card fields include "@revision" or similar suffixes.
+#     leaf = leaf.split("@", 1)[0]
+#     return {lower, leaf}
+
+
+# def _external_lineage_id(kind: str, name: str) -> str:
+#     # Deterministic external id (do NOT hash). Matches common autograder expectations.
+#     return f"hf:{kind}:{(name or '').strip()}"
+
+
+# def _find_ingested_artifact_id_by_url(artifact_type: ArtifactType, url: str) -> Optional[str]:
+#     wanted = (url or "").strip().lower()
+#     if not wanted:
+#         return None
+#     for a in _artifacts_by_id.values():
+#         if a.type == artifact_type and (a.url or "").strip().lower() == wanted:
+#             return a.id
+#     return None
+
+
+# def _as_list(v: Any) -> List[Any]:
+#     if v is None:
+#         return []
+#     if isinstance(v, list):
+#         return v
+#     return [v]
+
+
+# def _extract_dependency_specs(meta: Dict[str, Any]) -> List[Tuple[str, ArtifactType, str]]:
+#     """
+#     Return a list of (relationship, artifact_type, identifier_or_url) dependencies found in stored metadata.
+#     """
+#     out: List[Tuple[str, ArtifactType, str]] = []
+#     if not isinstance(meta, dict):
+#         return out
+
+#     # base model(s)
+#     for bm in _as_list(meta.get("base_model")):
+#         if bm is not None:
+#             out.append(("base_model", "model", str(bm)))
+
+#     # datasets can be stored under datasets/dataset
+#     for ds in _as_list(meta.get("datasets")) + _as_list(meta.get("dataset")):
+#         if ds is not None:
+#             out.append(("fine_tuning_dataset", "dataset", str(ds)))
+
+#     # training code / code repo
+#     for code in _as_list(meta.get("training_code")) + _as_list(meta.get("training_code_url")):
+#         if code is not None:
+#             out.append(("training_code", "code", str(code)))
+
+#     for code in _as_list(meta.get("code")) + _as_list(meta.get("code_repo")) + _as_list(meta.get("code_url")):
+#         if code is not None:
+#             out.append(("code", "code", str(code)))
+
+#     return out
+
+
+# def _find_ingested_artifact_id_by_identifier(artifact_type: ArtifactType, identifier: str) -> Optional[str]:
+#     """
+#     Best-effort mapping from HF card identifiers (e.g. "org/model" or "model")
+#     to a real ingested artifact id.
+
+#     Matching strategy (case-insensitive):
+#     - exact name match
+#     - leaf name match (after last '/')
+#     - identifier substring contained in stored URL
+#     - leaf substring contained in stored URL
+#     """
+#     wanted = _name_variants(identifier)
+#     if not wanted:
+#         return None
+
+#     for a in _artifacts_by_id.values():
+#         if a.type != artifact_type:
+#             continue
+#         a_name = (a.name or "").strip().lower()
+#         a_leaf = a_name.split("/")[-1]
+#         a_url = (a.url or "").strip().lower()
+
+#         # Exact-name match first (per autograder expectation).
+#         if a_name == (identifier or "").strip().lower():
+#             return a.id
+
+#         if a_name in wanted or a_leaf in wanted:
+#             return a.id
+#         for w in wanted:
+#             if w and (w in a_url):
+#                 return a.id
+
+#     return None
+
+
+# def _lineage_for_model_url(
+#     *,
+#     root_artifact_id: str,
+#     root_name: str,
+#     url: str,
+#     stored_metadata: Dict[str, Any],
+# ) -> Tuple[List[ArtifactLineageNode], List[ArtifactLineageEdge]]:
+#     nodes: Dict[str, ArtifactLineageNode] = {}
+#     edges: List[ArtifactLineageEdge] = []
+
+#     # Root node MUST use the real registry id the client queried.
+#     root_node_id = root_artifact_id
+#     nodes[root_node_id] = ArtifactLineageNode(
+#         artifact_id=root_node_id,
+#         name=root_name,
+#         source="config_json",
+#         metadata=None,
+#     )
+
+#     # 1) Dependencies explicitly provided in stored metadata (preferred; stable).
+#     for relationship, dep_type, dep in _extract_dependency_specs(stored_metadata):
+#         dep_id: Optional[str] = None
+#         dep_name = dep
+
+#         if dep.startswith("http://") or dep.startswith("https://"):
+#             dep_id = _find_ingested_artifact_id_by_url(dep_type, dep)
+#             dep_name = _parse_name(dep) if dep_id is None else dep_name
+#         if dep_id is None:
+#             dep_id = _find_ingested_artifact_id_by_identifier(dep_type, dep)
+
+#         if dep_id is None:
+#             dep_id = _external_lineage_id(dep_type, dep)
+
+#         nodes.setdefault(dep_id, ArtifactLineageNode(artifact_id=dep_id, name=dep_name, source="config_json"))
+#         edges.append(
+#             ArtifactLineageEdge(
+#                 from_node_artifact_id=dep_id,
+#                 to_node_artifact_id=root_node_id,
+#                 relationship=relationship,
+#             )
+#         )
+
+#     try:
+#         # Lazy import to keep startup lightweight.
+#         from huggingface_hub import model_info
+
+#         model_id = url.split("huggingface.co/", 1)[1].strip("/")
+#         meta = model_info(model_id).to_dict()
+#         card = meta.get("cardData", {}) if isinstance(meta, dict) else {}
+
+#         base_model = card.get("base_model") or card.get("base_model_name") or card.get("base_model_id")
+#         datasets = card.get("datasets") or card.get("dataset") or []
+
+#         base_models: List[str] = []
+#         if isinstance(base_model, str) and base_model:
+#             base_models = [base_model]
+#         elif isinstance(base_model, list):
+#             base_models = [str(x) for x in base_model if x]
+
+#         dataset_list: List[str] = []
+#         if isinstance(datasets, str) and datasets:
+#             dataset_list = [datasets]
+#         elif isinstance(datasets, list):
+#             dataset_list = [str(x) for x in datasets if x]
+
+#         for bm in base_models:
+#             bm_real = _find_ingested_artifact_id_by_identifier("model", bm)
+#             bm_id = bm_real or _external_lineage_id("model", bm)
+#             nodes.setdefault(bm_id, ArtifactLineageNode(artifact_id=bm_id, name=bm, source="config_json"))
+#             edges.append(
+#                 ArtifactLineageEdge(
+#                     from_node_artifact_id=bm_id,
+#                     to_node_artifact_id=root_node_id,
+#                     relationship="base_model",
+#                 )
+#             )
+
+#         for ds in dataset_list:
+#             ds_real = _find_ingested_artifact_id_by_identifier("dataset", ds)
+#             ds_id = ds_real or _external_lineage_id("dataset", ds)
+#             nodes.setdefault(ds_id, ArtifactLineageNode(artifact_id=ds_id, name=ds, source="config_json"))
+#             edges.append(
+#                 ArtifactLineageEdge(
+#                     from_node_artifact_id=ds_id,
+#                     to_node_artifact_id=root_node_id,
+#                     relationship="fine_tuning_dataset",
+#                 )
+#             )
+
+#     except Exception:
+#         pass
+
+#     # Dedupe edges
+#     seen_edges: Set[Tuple[str, str, str]] = set()
+#     deduped_edges: List[ArtifactLineageEdge] = []
+#     for e in edges:
+#         key = (e.from_node_artifact_id, e.to_node_artifact_id, e.relationship)
+#         if key not in seen_edges:
+#             seen_edges.add(key)
+#             deduped_edges.append(e)
+
+#     node_list = sorted(nodes.values(), key=lambda n: n.artifact_id)
+#     edge_list = sorted(deduped_edges, key=lambda e: (e.from_node_artifact_id, e.to_node_artifact_id, e.relationship))
+#     return node_list, edge_list
+
+
+# @app.get("/artifact/model/{id}/lineage")
+# async def model_lineage(
+#     id: str,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> ArtifactLineageGraph:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != "model":
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+
+#     nodes, edges = _lineage_for_model_url(
+#         root_artifact_id=id,
+#         root_name=a.name,
+#         url=a.url,
+#         stored_metadata=a.metadata,
+#     )
+#     return ArtifactLineageGraph(nodes=nodes, edges=edges)
+
+
+# # ----------------------------
+# # Cost
+# # ----------------------------
+
+
+# @app.get("/artifact/{artifact_type}/{id}/cost")
+# async def artifact_cost(
+#     artifact_type: ArtifactType,
+#     id: str,
+#     dependency: bool = Query(default=False),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> Dict[str, Any]:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != artifact_type:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+
+#     # Deterministic pseudo-size in MB based on URL hash.
+#     h = int(hashlib.sha256(a.url.encode("utf-8")).hexdigest()[:8], 16)
+#     standalone = float(50 + (h % 1000))  # 50..1049
+
+#     if not dependency:
+#         return {id: {"total_cost": standalone}}
+
+#     total = standalone
+#     if artifact_type == "model":
+#         nodes, _edges = _lineage_for_model_url(
+#             root_artifact_id=id,
+#             root_name=a.name,
+#             url=a.url,
+#             stored_metadata=a.metadata,
+#         )
+#         # Nodes without an explicit URL represent external deps; count them as small fixed costs.
+#         total += float(max(0, len(nodes) - 1) * 25)
+
+#     return {id: {"standalone_cost": standalone, "total_cost": total}}
+
+
+# # ----------------------------
+# # License check
+# # ----------------------------
+
+
+# @app.post("/artifact/model/{id}/license-check")
+# async def artifact_license_check(
+#     id: str,
+#     _req: SimpleLicenseCheckRequest = Body(...),
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> bool:
+#     _require_token(x_authorization)
+
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != "model":
+#         raise HTTPException(status_code=404, detail="The artifact or GitHub project could not be found.")
+#     return True
+
+
+# # ----------------------------
+# # Audit (return empty list to satisfy shape)
+# # ----------------------------
+
+
+# @app.get("/artifact/{artifact_type}/{id}/audit")
+# async def artifact_audit(
+#     artifact_type: ArtifactType,
+#     id: str,
+#     x_authorization: Optional[str] = Header(default=None, alias="X-Authorization"),
+# ) -> List[Dict[str, Any]]:
+#     _require_token(x_authorization)
+#     a = _artifacts_by_id.get(id)
+#     if not a or a.type != artifact_type:
+#         raise HTTPException(status_code=404, detail="Artifact does not exist.")
+#     return []
+
+
+# # ----------------------------
+# # Frontend (Lighthouse)
+# # ----------------------------
+
+
+# @app.get("/", response_class=HTMLResponse)
+# async def frontend() -> str:
+#     return """<!doctype html>
+# <html lang="en">
+# <head>
+#     <meta charset="utf-8" />
+#     <meta name="viewport" content="width=device-width,initial-scale=1" />
+#     <meta name="description" content="ECE461 Phase 2 Trustworthy Model Registry UI" />
+#     <title>Trustworthy Model Registry</title>
+#     <style>
+#       :root { color-scheme: light; }
+#       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #f6f8fa; color: #111; }
+#       header { background: #0b3d91; color: #fff; padding: 16px; }
+#       main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+#       .card { background: #fff; border: 1px solid #d0d7de; border-radius: 12px; padding: 16px; }
+#       a { color: #0b3d91; }
+#       .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #d1e7ff; color: #0b3d91; font-weight: 600; }
+#       .skip { position: absolute; left: -999px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+#       .skip:focus { position: static; width: auto; height: auto; padding: 8px; background: #fff; }
+#     </style>
+# </head>
+# <body>
+#     <a class="skip" href="#main">Skip to content</a>
+#     <header>
+#       <h1 style="margin:0;font-size:20px;">Trustworthy Model Registry</h1>
+#       <p style="margin:4px 0 0 0;">ECE461 Phase 2</p>
+#     </header>
+#     <main id="main">
+#       <div class="card" role="region" aria-label="Service status">
+#         <p class="pill" aria-label="Service status: running">Service running</p>
+#         <p>Use the API endpoints to ingest artifacts and retrieve ratings.</p>
+#         <ul>
+#           <li><a href="/health">Health</a></li>
+#           <li><a href="/tracks">Tracks</a></li>
+#         </ul>
+#     </div>
+#     </main>
+# </body>
+# </html>"""
+
+
+# # AWS Lambda handler
+# lambda_handler = Mangum(app, lifespan="off")
+
+
+
+
 """
 FastAPI application for the Trustworthy Model Registry API.
 
@@ -614,7 +1587,7 @@ async def model_rate(
 
 
 # ----------------------------
-# Lineage (best-effort)
+# Lineage (improved implementation)
 # ----------------------------
 
 
@@ -641,6 +1614,55 @@ def _find_ingested_artifact_id_by_url(artifact_type: ArtifactType, url: str) -> 
     for a in _artifacts_by_id.values():
         if a.type == artifact_type and (a.url or "").strip().lower() == wanted:
             return a.id
+    return None
+
+
+def _find_ingested_artifact_id_by_identifier(artifact_type: ArtifactType, identifier: str) -> Optional[str]:
+    """
+    Best-effort mapping from HF card identifiers (e.g. "org/model" or "model")
+    to a real ingested artifact id.
+
+    Matching strategy (case-insensitive):
+    - exact full identifier match against artifact name
+    - exact full identifier match against artifact URL
+    - leaf name match (after last '/')
+    """
+    if not identifier:
+        return None
+    
+    identifier_lower = identifier.strip().lower()
+    identifier_leaf = identifier_lower.split("/")[-1]
+    
+    # First pass: exact matches
+    for a in _artifacts_by_id.values():
+        if a.type != artifact_type:
+            continue
+        
+        a_name_lower = (a.name or "").strip().lower()
+        a_url_lower = (a.url or "").strip().lower()
+        
+        # Exact name match (highest priority)
+        if a_name_lower == identifier_lower:
+            return a.id
+        
+        # Full identifier in URL
+        if identifier_lower in a_url_lower:
+            # Make sure it's a meaningful match (not just a substring)
+            if f"/{identifier_lower}" in a_url_lower or a_url_lower.endswith(identifier_lower):
+                return a.id
+    
+    # Second pass: leaf matches
+    for a in _artifacts_by_id.values():
+        if a.type != artifact_type:
+            continue
+        
+        a_name_lower = (a.name or "").strip().lower()
+        a_name_leaf = a_name_lower.split("/")[-1]
+        
+        # Leaf name match
+        if a_name_leaf == identifier_leaf and identifier_leaf:
+            return a.id
+    
     return None
 
 
@@ -682,41 +1704,6 @@ def _extract_dependency_specs(meta: Dict[str, Any]) -> List[Tuple[str, ArtifactT
     return out
 
 
-def _find_ingested_artifact_id_by_identifier(artifact_type: ArtifactType, identifier: str) -> Optional[str]:
-    """
-    Best-effort mapping from HF card identifiers (e.g. "org/model" or "model")
-    to a real ingested artifact id.
-
-    Matching strategy (case-insensitive):
-    - exact name match
-    - leaf name match (after last '/')
-    - identifier substring contained in stored URL
-    - leaf substring contained in stored URL
-    """
-    wanted = _name_variants(identifier)
-    if not wanted:
-        return None
-
-    for a in _artifacts_by_id.values():
-        if a.type != artifact_type:
-            continue
-        a_name = (a.name or "").strip().lower()
-        a_leaf = a_name.split("/")[-1]
-        a_url = (a.url or "").strip().lower()
-
-        # Exact-name match first (per autograder expectation).
-        if a_name == (identifier or "").strip().lower():
-            return a.id
-
-        if a_name in wanted or a_leaf in wanted:
-            return a.id
-        for w in wanted:
-            if w and (w in a_url):
-                return a.id
-
-    return None
-
-
 def _lineage_for_model_url(
     *,
     root_artifact_id: str,
@@ -737,20 +1724,50 @@ def _lineage_for_model_url(
     )
 
     # 1) Dependencies explicitly provided in stored metadata (preferred; stable).
+    # Process these FIRST and track what we've already added
+    processed_deps: Set[Tuple[str, str]] = set()  # (dep_type, dep_identifier)
+    
     for relationship, dep_type, dep in _extract_dependency_specs(stored_metadata):
         dep_id: Optional[str] = None
         dep_name = dep
+        dep_identifier = dep.lower().strip()
 
+        # Try to find as URL first
         if dep.startswith("http://") or dep.startswith("https://"):
             dep_id = _find_ingested_artifact_id_by_url(dep_type, dep)
-            dep_name = _parse_name(dep) if dep_id is None else dep_name
+            if dep_id:
+                # Get the actual name from the found artifact
+                found_artifact = _artifacts_by_id.get(dep_id)
+                if found_artifact:
+                    dep_name = found_artifact.name
+            else:
+                dep_name = _parse_name(dep)
+        
+        # Try to find by identifier if not found by URL
         if dep_id is None:
             dep_id = _find_ingested_artifact_id_by_identifier(dep_type, dep)
+            if dep_id:
+                # Get the actual name from the found artifact
+                found_artifact = _artifacts_by_id.get(dep_id)
+                if found_artifact:
+                    dep_name = found_artifact.name
 
+        # Only create external node if not found in registry
         if dep_id is None:
             dep_id = _external_lineage_id(dep_type, dep)
 
-        nodes.setdefault(dep_id, ArtifactLineageNode(artifact_id=dep_id, name=dep_name, source="config_json"))
+        # Track this dependency
+        processed_deps.add((dep_type, dep_identifier))
+        
+        # Add node if not already present
+        if dep_id not in nodes:
+            nodes[dep_id] = ArtifactLineageNode(
+                artifact_id=dep_id, 
+                name=dep_name, 
+                source="config_json"
+            )
+        
+        # Add edge
         edges.append(
             ArtifactLineageEdge(
                 from_node_artifact_id=dep_id,
@@ -759,8 +1776,8 @@ def _lineage_for_model_url(
             )
         )
 
+    # 2) Try to fetch from HuggingFace card data
     try:
-        # Lazy import to keep startup lightweight.
         from huggingface_hub import model_info
 
         model_id = url.split("huggingface.co/", 1)[1].strip("/")
@@ -782,10 +1799,33 @@ def _lineage_for_model_url(
         elif isinstance(datasets, list):
             dataset_list = [str(x) for x in datasets if x]
 
+        # Process base models from card data
         for bm in base_models:
+            bm_lower = bm.lower().strip()
+            # Skip if already processed from metadata
+            if ("model", bm_lower) in processed_deps:
+                continue
+            
+            # Try to find in registry
             bm_real = _find_ingested_artifact_id_by_identifier("model", bm)
-            bm_id = bm_real or _external_lineage_id("model", bm)
-            nodes.setdefault(bm_id, ArtifactLineageNode(artifact_id=bm_id, name=bm, source="config_json"))
+            if bm_real:
+                bm_id = bm_real
+                # Get actual name from artifact
+                found_artifact = _artifacts_by_id.get(bm_id)
+                bm_name = found_artifact.name if found_artifact else bm
+            else:
+                bm_id = _external_lineage_id("model", bm)
+                bm_name = bm
+            
+            # Add node if not present
+            if bm_id not in nodes:
+                nodes[bm_id] = ArtifactLineageNode(
+                    artifact_id=bm_id, 
+                    name=bm_name, 
+                    source="config_json"
+                )
+            
+            # Add edge
             edges.append(
                 ArtifactLineageEdge(
                     from_node_artifact_id=bm_id,
@@ -794,10 +1834,33 @@ def _lineage_for_model_url(
                 )
             )
 
+        # Process datasets from card data
         for ds in dataset_list:
+            ds_lower = ds.lower().strip()
+            # Skip if already processed from metadata
+            if ("dataset", ds_lower) in processed_deps:
+                continue
+            
+            # Try to find in registry
             ds_real = _find_ingested_artifact_id_by_identifier("dataset", ds)
-            ds_id = ds_real or _external_lineage_id("dataset", ds)
-            nodes.setdefault(ds_id, ArtifactLineageNode(artifact_id=ds_id, name=ds, source="config_json"))
+            if ds_real:
+                ds_id = ds_real
+                # Get actual name from artifact
+                found_artifact = _artifacts_by_id.get(ds_id)
+                ds_name = found_artifact.name if found_artifact else ds
+            else:
+                ds_id = _external_lineage_id("dataset", ds)
+                ds_name = ds
+            
+            # Add node if not present
+            if ds_id not in nodes:
+                nodes[ds_id] = ArtifactLineageNode(
+                    artifact_id=ds_id, 
+                    name=ds_name, 
+                    source="config_json"
+                )
+            
+            # Add edge
             edges.append(
                 ArtifactLineageEdge(
                     from_node_artifact_id=ds_id,
@@ -967,5 +2030,3 @@ async def frontend() -> str:
 
 # AWS Lambda handler
 lambda_handler = Mangum(app, lifespan="off")
-
-
